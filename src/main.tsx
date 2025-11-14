@@ -20,7 +20,7 @@ keycloak
     console.log("Access Token:", keycloak.token);
 
     // 초기화 완료 후 렌더링 시작
-    ReactDOM.createRoot(document.getElementById("root")!).render(
+    ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
       <React.StrictMode>
         <App />
       </React.StrictMode>
