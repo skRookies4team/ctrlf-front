@@ -104,7 +104,7 @@ const MyPage: React.FC = () => {
         <ul className="sidebar-nav">
           <li onClick={() => handleNavigate("/dashboard")}>대시보드</li>
           <li onClick={() => handleNavigate("/mypage")}>마이페이지</li>
-          <li>전자결제</li>
+          <li>전자결재</li>
           <li>메세지</li>
           <li>행사일정</li>
           <li>공지사항</li>
