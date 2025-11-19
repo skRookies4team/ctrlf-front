@@ -164,7 +164,12 @@ const Layout: React.FC<LayoutProps> = ({ children, pageClassName }) => {
           >
             공지사항
           </li>
-          <li>조직도</li>
+          <li
+            className={isActive("/orgchart") ? "active" : ""}
+            onClick={() => handleNavigate("/orgchart")}
+          >
+            조직도
+          </li>
           <li>교육</li>
         </ul>
       </aside>
