@@ -7,6 +7,7 @@ import MessagePage from "./pages/MessagePage";
 import EventPage from "./pages/EventPage";
 import NoticePage from "./pages/NoticePage";
 import OrgChartPage from "./pages/OrgChartPage";
+import EducationPage from "./pages/EducationPage";
 import Layout from "./components/Layout";
 
 export default function App() {
@@ -81,6 +82,16 @@ export default function App() {
         element={
           <Layout pageClassName="orgchart-page">
             <OrgChartPage />
+          </Layout>
+        }
+      />
+
+      {/* 교육 */}
+      <Route
+        path="/education"
+        element={
+          <Layout pageClassName="education-page">
+            <EducationPage />
           </Layout>
         }
       />

@@ -1,0 +1,215 @@
+/* 페이지 전체 래퍼 */
+.education-wrapper {
+  padding: 40px 48px 20px;
+}
+
+/* 타이틀 + 카드 전체를 감싸는 내부 컨테이너 */
+.education-inner {
+  max-width: 1200px;
+  margin: 0 auto; /* 가운데 정렬 */
+}
+
+/* 상단 "교육" 타이틀 */
+.education-title {
+  font-size: 20px;
+  font-weight: 600;
+  margin: 0 0 14px 45px;
+}
+
+/* 둥근 사각형 본문 카드 */
+.education-main-card {
+  background-color: #ffffff;
+  border-radius: 32px;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+  padding: 24px 32px 28px;
+  min-height: 0;
+  width: 100%;
+}
+
+/* 내부 스크롤 영역 */
+.education-scrollable {
+  max-height: calc(100vh - 220px);
+  overflow-y: auto;
+  padding-right: 8px;
+}
+
+/* 스크롤바 스타일 */
+.education-scrollable::-webkit-scrollbar {
+  width: 6px;
+}
+
+.education-scrollable::-webkit-scrollbar-track {
+  background-color: #f3f4f6;
+  border-radius: 999px;
+}
+
+.education-scrollable::-webkit-scrollbar-thumb {
+  background-color: #111827;
+  border-radius: 999px;
+}
+
+/* 섹션 간 간격 */
+.education-section + .education-section {
+  margin-top: 24px;
+}
+
+/* 섹션 : 왼쪽 화살표 / 본문 / 오른쪽 화살표 */
+.education-section-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+/* 섹션 본문 */
+.education-section-body {
+  flex: 1;
+}
+
+/* 섹션 제목 */
+.education-section-title {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0 0 10px;
+}
+
+/* 좌우 화살표 공통 */
+.education-carousel-arrow {
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  border: none;
+  background-color: #f5f5f5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: background-color 0.15s ease, transform 0.15s ease,
+    opacity 0.15s ease;
+}
+
+.education-carousel-arrow-icon {
+  font-size: 11px;
+  color: #9ca3af;
+}
+
+.education-carousel-arrow.active {
+  cursor: pointer;
+}
+
+.education-carousel-arrow.active:hover {
+  background-color: #e5e7eb;
+  transform: translateY(-1px);
+}
+
+.education-carousel-arrow.disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+/* === 개별 카드 레이아웃 === */
+
+/* 3개 고정 + 카드 가로폭 살짝 줄이기 */
+.education-video-row {
+  display: grid;
+  grid-template-columns: repeat(3, 320px);
+  gap: 20px;
+  justify-content: space-between;
+}
+
+/* 개별 영상 카드 */
+.education-video-card {
+  position: relative;
+  background-color: #ffffff;
+  border-radius: 14px;
+  border: 1px solid #e5e7eb;
+  padding: 10px;
+  box-shadow: 0 3px 10px rgba(15, 23, 42, 0.04);
+}
+
+/* 카드 오른쪽 상단 x 버튼 */
+.education-video-close {
+  position: absolute;
+  right: 8px;
+  top: 6px;
+  border: none;
+  background: transparent;
+  color: #9ca3af;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+/* 썸네일 비율 */
+.education-video-thumbnail {
+  background-color: #e5e5e5;
+  border-radius: 10px;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 재생 버튼 */
+.education-play-button {
+  width: 44px;
+  height: 44px;
+  border-radius: 999px;
+  border: none;
+  background-color: #000000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.education-play-icon {
+  width: 0;
+  height: 0;
+  border-top: 7px solid transparent;
+  border-bottom: 7px solid transparent;
+  border-left: 12px solid #ffffff;
+  margin-left: 2px;
+}
+
+/* 카드 아래 교육명 텍스트 */
+.education-video-title {
+  margin: 8px 4px 2px;
+  font-size: 11px;
+  color: #4b5563;
+  line-height: 1.4;
+  word-break: keep-all;
+}
+
+/* 반응형 */
+@media (max-width: 1200px) {
+  .education-wrapper {
+    padding: 48px 32px 20px;
+  }
+}
+
+@media (max-width: 900px) {
+  .education-video-row {
+    grid-template-columns: repeat(2, 230px);
+    justify-content: center;
+  }
+}
+
+@media (max-width: 768px) {
+  .education-wrapper {
+    padding: 40px 20px 20px;
+  }
+
+  .education-main-card {
+    padding: 20px 18px 24px;
+  }
+
+  .education-video-row {
+    grid-template-columns: 1fr;
+    justify-content: center;
+  }
+
+  .education-scrollable {
+    max-height: calc(100vh - 200px);
+  }
+}
