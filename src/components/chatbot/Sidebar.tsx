@@ -3,22 +3,13 @@ import React, { useEffect, useState } from "react";
 import chatLogo from "../../assets/chatlogo.png";
 import newChatIcon from "../../assets/newchat.png";
 import searchChatIcon from "../../assets/searchchat.png";
-import type { ChatDomain } from "./chatApi";
-
-type ChatSessionSummary = {
-  id: string;
-  title: string;
-  createdAt: number;
-  updatedAt: number;
-  domain: ChatDomain;
-  lastMessage: string;
-};
+import type { SidebarSessionSummary } from "../../types/chat";
 
 interface SidebarProps {
   collapsed: boolean;
   onToggleCollapse: () => void;
 
-  sessions: ChatSessionSummary[];
+  sessions: SidebarSessionSummary[];
   activeSessionId: string | null;
   searchTerm: string;
   onSearchTermChange: (value: string) => void;

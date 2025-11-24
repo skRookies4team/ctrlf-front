@@ -1,26 +1,5 @@
 // src/components/chatbot/chatApi.ts
-
-// 백엔드와 약속할 최소 요청 포맷
-export type ChatMessagePayload = {
-  role: "user" | "assistant";
-  content: string;
-};
-
-// 🔹 세션 도메인 타입 (1단계)
-export type ChatDomain =
-  | "general"
-  | "policy"
-  | "faq"
-  | "quiz"
-  | "edu"
-  | "security";
-
-export interface ChatRequest {
-  sessionId: string;
-  // 🔹 현재 세션의 도메인 (백엔드 라우팅 등에 활용 예정)
-  domain: ChatDomain;
-  messages: ChatMessagePayload[];
-}
+import type { ChatDomain, ChatRequest } from "../../types/chat";
 
 /**
  * 실제로는 여기에서:

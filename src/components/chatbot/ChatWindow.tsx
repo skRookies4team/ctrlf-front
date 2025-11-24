@@ -5,26 +5,10 @@ import ruleIcon from "../../assets/rule.png";
 import faqIcon from "../../assets/faq.png";
 import quizIcon from "../../assets/quiz.png";
 import eduIcon from "../../assets/edu.png";
-import type { ChatDomain } from "./chatApi";
-
-type ChatMessage = {
-  id: string;
-  role: "user" | "assistant";
-  content: string;
-  createdAt: number;
-};
-
-type ChatSessionForWindow = {
-  id: string;
-  title: string;
-  createdAt: number;
-  updatedAt?: number;
-  domain: ChatDomain; // 🔹 세션 도메인
-  messages: ChatMessage[];
-};
+import type { ChatDomain, ChatSession } from "../../types/chat";
 
 interface ChatWindowProps {
-  activeSession: ChatSessionForWindow | null;
+  activeSession: ChatSession | null;
   onSendMessage: (text: string) => void;
   isSending: boolean; // 🔹 전송 중 여부
   onChangeDomain: (domain: ChatDomain) => void; // 🔹 도메인 변경 콜백

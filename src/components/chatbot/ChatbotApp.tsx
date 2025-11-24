@@ -3,16 +3,21 @@ import React, { useEffect, useRef, useState } from "react";
 import "./chatbot.css";
 import Sidebar from "./Sidebar";
 import ChatWindow from "./ChatWindow";
+import { sendChatToAI } from "./chatApi";
 import {
-  sendChatToAI,
-  type ChatRequest,
   type ChatDomain,
-} from "./chatApi";
-
-interface Anchor {
-  x: number;
-  y: number;
-}
+  type ChatMessage,
+  type ChatSession,
+  type SidebarSessionSummary,
+  type ChatRequest,
+} from "../../types/chat";
+import {
+  computePanelPosition,
+  buildLastMessagePreview,
+  buildSessionTitleFromMessage,
+  type Anchor,
+  type PanelSize,
+} from "../../utils/chat";
 
 interface ChatbotAppProps {
   onClose: () => void; // 닫기 요청 (X 버튼 또는 아이콘 클릭)
@@ -21,10 +26,7 @@ interface ChatbotAppProps {
   onAnimationEnd?: () => void;
 }
 
-type Size = {
-  width: number;
-  height: number;
-};
+type Size = PanelSize;
 
 type ResizeDirection = "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw";
 
@@ -47,114 +49,12 @@ type DragState = {
   startLeft: number;
 };
 
-type ChatMessage = {
-  id: string;
-  role: "user" | "assistant";
-  content: string;
-  createdAt: number;
-};
-
-// 🔹 세션 단위에 domain 추가
-type ChatSession = {
-  id: string;
-  title: string;
-  createdAt: number;
-  updatedAt: number; // 최근 업데이트 시간
-  domain: ChatDomain;
-  messages: ChatMessage[];
-};
-
-// 🔹 사이드바에 넘길 요약용 타입 (마지막 메시지 포함)
-type SidebarSessionSummary = {
-  id: string;
-  title: string;
-  createdAt: number;
-  updatedAt: number;
-  domain: ChatDomain;
-  lastMessage: string;
-};
-
-// 첫 사용자 메시지에서 세션 제목을 만들어주는 함수
-function buildSessionTitleFromMessage(content: string): string {
-  let title = content.replace(/\s+/g, " ").trim();
-
-  if (!title) {
-    return "새 채팅";
-  }
-
-  const maxLen = 18;
-  if (title.length > maxLen) {
-    title = title.slice(0, maxLen).trim() + "…";
-  }
-  return title;
-}
-
-// 마지막 메시지 한 줄 프리뷰용
-function buildLastMessagePreview(content: string): string {
-  const oneLine = content.replace(/\s+/g, " ").trim();
-  if (!oneLine) return "";
-
-  const maxLen = 24;
-  if (oneLine.length > maxLen) {
-    return oneLine.slice(0, maxLen).trimEnd() + "…";
-  }
-  return oneLine;
-}
-
 const MIN_WIDTH = 520;
 const MIN_HEIGHT = 480;
 const INITIAL_SIZE: Size = { width: 550, height: 550 };
 
 // 🔹 최대 세션 개수 (FIFO 기준)
 const MAX_SESSIONS = 30;
-
-// 아이콘 위치(anchor) + 패널 크기(size) -> 패널의 top/left 계산
-function computePanelPosition(
-  anchor: Anchor | null | undefined,
-  size: Size
-): { top: number; left: number } {
-  if (typeof window === "undefined") {
-    return { top: 0, left: 0 };
-  }
-
-  const { innerWidth, innerHeight } = window;
-  const margin = 16; // 화면 가장자리 여백
-  const visibleMargin = 40; // 아이콘과 패널 사이 최소 거리 (아이콘이 보이도록)
-  const overlapY = -10; // 아이콘을 얼마나 가릴지 (음수면 더 위로)
-
-  let left: number;
-  let top: number;
-
-  if (anchor) {
-    // 세로 위치: 아이콘 바로 위에
-    top = anchor.y - size.height + overlapY;
-
-    const isRightSide = anchor.x >= innerWidth / 2;
-
-    if (isRightSide) {
-      left = anchor.x - visibleMargin - size.width;
-    } else {
-      left = anchor.x + visibleMargin;
-    }
-  } else {
-    // anchor 없으면 fallback: 화면 중앙
-    left = (innerWidth - size.width) / 2;
-    top = (innerHeight - size.height) / 2;
-  }
-
-  // 화면 밖으로 나가지 않도록 클램핑
-  if (left < margin) left = margin;
-  if (left + size.width > innerWidth - margin) {
-    left = innerWidth - margin - size.width;
-  }
-
-  if (top < margin) top = margin;
-  if (top + size.height > innerHeight - margin) {
-    top = innerHeight - margin - size.height;
-  }
-
-  return { top, left };
-}
 
 // 🔹 초기 세션 한 개 ("새 채팅")
 const initialSessions: ChatSession[] = [
