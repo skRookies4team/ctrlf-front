@@ -18,14 +18,15 @@ import {
   type Anchor,
   type PanelSize,
 } from "../../utils/chat";
+import { FAQ_ITEMS } from "./faqData"; // 🔹 FAQ 데이터 추가 import
 
 interface ChatbotAppProps {
   onClose: () => void; // 닫기 요청 (X 버튼 또는 아이콘 클릭)
   anchor?: Anchor | null;
   animationState?: "opening" | "closing";
   onAnimationEnd?: () => void;
-  onOpenEduPanel?: () => void;   // 교육 패널 열기 콜백
-  onOpenQuizPanel?: () => void;  // 퀴즈 패널 열기 콜백 (새 창)
+  onOpenEduPanel?: () => void; // 교육 패널 열기 콜백
+  onOpenQuizPanel?: () => void; // 퀴즈 패널 열기 콜백 (새 창)
 }
 
 type Size = PanelSize;
@@ -368,7 +369,54 @@ const ChatbotApp: React.FC<ChatbotAppProps> = ({
     };
   });
 
-  // ====== 메시지 전송 전체 플로우 ======
+  // ====== FAQ 빠른 질문: 질문 + 답변 한 번에 추가 (AI 호출 없음) ======
+  const handleFaqQuickSend = (faqId: number) => {
+    if (!activeSessionId) return;
+
+    const faqItem = FAQ_ITEMS.find((item) => item.id === faqId);
+    if (!faqItem) return;
+
+    const now = Date.now();
+
+    setSessions((prev) =>
+      prev.map((session) => {
+        if (session.id !== activeSessionId) return session;
+
+        const hasUserMessage = session.messages.some(
+          (m) => m.role === "user"
+        );
+        const isDefaultTitle = session.title.startsWith("새 채팅");
+
+        const nextTitle =
+          !hasUserMessage && isDefaultTitle
+            ? buildSessionTitleFromMessage(faqItem.question)
+            : session.title;
+
+        const userMessage: ChatMessage = {
+          id: `${activeSessionId}-faq-${faqId}-user-${now}`,
+          role: "user",
+          content: faqItem.question,
+          createdAt: now,
+        };
+
+        const assistantMessage: ChatMessage = {
+          id: `${activeSessionId}-faq-${faqId}-assistant-${now + 1}`,
+          role: "assistant",
+          content: faqItem.answer,
+          createdAt: now + 1,
+        };
+
+        return {
+          ...session,
+          title: nextTitle,
+          messages: [...session.messages, userMessage, assistantMessage],
+          updatedAt: now + 1,
+        };
+      })
+    );
+  };
+
+  // ====== 메시지 전송 전체 플로우 (일반 채팅: AI 호출) ======
   const handleSendMessage = (text: string) => {
     void processSendMessage(text);
   };
@@ -590,6 +638,8 @@ const ChatbotApp: React.FC<ChatbotAppProps> = ({
               onOpenEduPanel={onOpenEduPanel}
               // 홈에서 퀴즈 카드 클릭 시 새 창 열기
               onOpenQuizPanel={onOpenQuizPanel}
+              // 🔹 FAQ 빠른 질문(버튼) 클릭 시: Q/A 쌍을 바로 세션에 추가
+              onFaqQuickSend={handleFaqQuickSend}
             />
           </div>
         </div>

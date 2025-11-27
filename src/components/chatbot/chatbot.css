@@ -526,7 +526,6 @@
 }
 
 /* 더 보기 메뉴 */
-/* 더 보기 메뉴 */
 .cb-sidebar-item-menu {
   position: fixed;
   z-index: 9999;
@@ -688,6 +687,86 @@
   border-radius: 18px;
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
 }
+
+/* =========================
+   FAQ 전용 뷰 (챗봇 메인 → FAQ 카드 클릭 시)
+   ========================= */
+
+.cb-faq-view {
+  max-width: 520px;
+  margin: 80px auto 0;
+}
+
+.cb-faq-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.cb-faq-icon {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+}
+
+.cb-faq-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.cb-faq-header-text {
+  font-size: 13px;
+  line-height: 1.5;
+  color: #111827;
+}
+
+.cb-faq-header-line {
+  margin: 0;
+}
+
+.cb-faq-header-line-strong {
+  font-weight: 600;
+}
+
+.cb-faq-divider {
+  height: 1px;
+  background-color: #e5e5e5;
+  margin: 10px 0 24px;
+}
+
+/* 자주하는 질문 버튼 4개 (2 x 2 레이아웃) */
+.cb-faq-suggestions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 16px;
+  row-gap: 12px;
+  max-width: 420px;
+  margin: 0 auto;
+}
+
+.cb-faq-suggestion-btn {
+  width: 100%;
+  padding: 8px 16px;
+  border-radius: 999px;
+  border: 1px solid #d4d4d4;
+  background-color: #ffffff;
+  font-size: 13px;
+  cursor: pointer;
+  box-shadow: 0 3px 6px rgba(0, 0, 0, 0.06);
+}
+
+.cb-faq-suggestion-btn:hover:not(:disabled) {
+  box-shadow: 0 5px 12px rgba(0, 0, 0, 0.1);
+  background-color: #f9fafb;
+}
+
+.cb-faq-suggestion-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 
 .cb-welcome-row {
   display: flex;

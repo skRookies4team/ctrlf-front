@@ -5,6 +5,7 @@ import faqIcon from "../../assets/faq.png";
 import quizIcon from "../../assets/quiz.png";
 import eduIcon from "../../assets/edu.png";
 import type { ChatDomain, ChatSession } from "../../types/chat";
+import { FAQ_ITEMS } from "./faqData"; // 🔹 FAQ 데이터 import
 
 interface ChatWindowProps {
   activeSession: ChatSession | null;
@@ -13,6 +14,7 @@ interface ChatWindowProps {
   onChangeDomain: (domain: ChatDomain) => void; // 🔹 도메인 변경 콜백
   onOpenEduPanel?: () => void; // 🔹 교육 패널 열기 (외부 창)
   onOpenQuizPanel?: () => void; // 🔹 퀴즈 패널 열기 (외부 창)
+  onFaqQuickSend?: (faqId: number) => void; // 🔹 FAQ 빠른 질문 클릭 핸들러
 }
 
 type ViewKey = "home" | "policy" | "faq";
@@ -24,6 +26,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
   onChangeDomain,
   onOpenEduPanel,
   onOpenQuizPanel,
+  onFaqQuickSend,
 }) => {
   const [inputValue, setInputValue] = useState("");
   const [activeView, setActiveView] = useState<ViewKey>("home");
@@ -83,6 +86,17 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
     }
   };
 
+  // 🔹 FAQ 빠른 질문 버튼 클릭 시
+  //  - 부모(ChatbotApp)에 faqId 전달
+  //  - 뷰를 home으로 돌려서 실제 채팅 화면을 보여줌
+  const handleFaqSuggestionClick = (faqId: number) => {
+    if (isSending) return;
+    if (!onFaqQuickSend) return;
+
+    onFaqQuickSend(faqId);
+    setActiveView("home");
+  };
+
   // 🔹 규정 전용 화면 (플레이스홀더)
   const renderPolicyView = () => (
     <div className="cb-domain-view">
@@ -101,21 +115,38 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
     </div>
   );
 
-  // 🔹 FAQ 전용 화면 (플레이스홀더)
+  // 🔹 FAQ 전용 화면 – 2번째 디자인 이미지처럼 구현
   const renderFaqView = () => (
-    <div className="cb-domain-view">
-      <h3 className="cb-domain-view-title">FAQ</h3>
-      <p className="cb-domain-view-desc">
-        자주 묻는 질문을 카테고리별로 나누고, 클릭 시 상세 답변을 보여주는
-        아코디언/리스트 UI를 구성할 수 있습니다.
-      </p>
-      <button
-        type="button"
-        className="cb-domain-view-back"
-        onClick={() => setActiveView("home")}
-      >
-        ← 처음 화면으로 돌아가기
-      </button>
+    <div className="cb-faq-view">
+      <div className="cb-faq-header">
+        <div className="cb-faq-icon">
+          <img src={robotIcon} alt="챗봇 아이콘" />
+        </div>
+        <div className="cb-faq-header-text">
+          <p className="cb-faq-header-line">
+            사용자가 가장 많이 묻는 질문 기반
+          </p>
+          <p className="cb-faq-header-line cb-faq-header-line-strong">
+            FAQ입니다.
+          </p>
+        </div>
+      </div>
+
+      <div className="cb-faq-divider" />
+
+      <div className="cb-faq-suggestions">
+        {FAQ_ITEMS.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            className="cb-faq-suggestion-btn"
+            onClick={() => handleFaqSuggestionClick(item.id)}
+            disabled={isSending}
+          >
+            {item.label}
+          </button>
+        ))}
+      </div>
     </div>
   );
 
@@ -150,9 +181,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
                     <button
                       type="button"
                       className="cb-feature-card"
-                      onClick={() =>
-                        handleFeatureClick("policy", "policy")
-                      }
+                      onClick={() => handleFeatureClick("policy", "policy")}
                     >
                       <img
                         src={ruleIcon}
