@@ -1,3 +1,5 @@
+// src/components/chatbot/ChatbotApp.tsx
+
 import React, { useEffect, useRef, useState } from "react";
 import "./chatbot.css";
 import Sidebar from "./Sidebar";
@@ -441,55 +443,8 @@ const ChatbotApp: React.FC<ChatbotAppProps> = ({
         return {
           ...session,
           title: nextTitle,
-          messages: [...session.messages, userMessage, assistantMessage],
-          updatedAt: now + 1,
-        };
-      })
-    );
-  };
-
-  // ====== 규정 카드 빠른 요약: 규정 클릭 시 챗봇 답변처럼 메시지 추가 ======
-  const handlePolicyQuickExplain = (
-    ruleId: string,
-    ruleTitle: string,
-    ruleSummary: string
-  ) => {
-    if (!activeSessionId) return;
-    const now = Date.now();
-
-    setSessions((prev) =>
-      prev.map((session) => {
-        if (session.id !== activeSessionId) return session;
-
-        const hasUserMessage = session.messages.some(
-          (m) => m.role === "user"
-        );
-        const isDefaultTitle = session.title.startsWith("새 채팅");
-
-        const nextTitle =
-          !hasUserMessage && isDefaultTitle
-            ? buildSessionTitleFromMessage(ruleTitle)
-            : session.title;
-
-        const userMessage: ChatMessage = {
-          id: `${activeSessionId}-policy-${ruleId}-user-${now}`,
-          role: "user",
-          content: `『${ruleTitle}』 규정에 대해 알려줘.`,
-          createdAt: now,
-        };
-
-        const assistantMessage: ChatMessage = {
-          id: `${activeSessionId}-policy-${ruleId}-assistant-${now + 1}`,
-          role: "assistant",
-          content:
-            `${ruleSummary}\n\n(자세한 내용은 사내 인트라넷 ‘규정집’에서 전문을 확인해 주세요.)`,
-          createdAt: now + 1,
-        };
-
-        return {
-          ...session,
-          title: nextTitle,
-          domain: "policy",
+          // FAQ 카드를 누른 세션은 FAQ 도메인으로 전환
+          domain: "faq",
           messages: [...session.messages, userMessage, assistantMessage],
           updatedAt: now + 1,
         };
@@ -557,7 +512,8 @@ const ChatbotApp: React.FC<ChatbotAppProps> = ({
       const suggestionMessage: ChatMessage = {
         id: `${sessionIdForSend}-report-suggestion-${suggestionTime}`,
         role: "assistant",
-        content: "신고 절차를 알려드릴게요!",
+        content:
+          "신고 절차를 알려드릴게요! 부적절한 상황이라면 지금 바로 신고할 수 있어요.",
         createdAt: suggestionTime,
         kind: "reportSuggestion",
       };
@@ -842,8 +798,6 @@ const ChatbotApp: React.FC<ChatbotAppProps> = ({
               onOpenEduPanel={handleOpenEduPanelFromChat}
               onOpenQuizPanel={handleOpenQuizPanelFromChat}
               onFaqQuickSend={handleFaqQuickSend}
-              onPolicyQuickExplain={handlePolicyQuickExplain}
-              panelWidth={size.width}
               onRetryFromMessage={handleRetryFromMessage}
               onFeedbackChange={handleFeedbackChange}
               onReportSubmit={handleSubmitReport}

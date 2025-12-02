@@ -574,14 +574,14 @@
   flex: 1;
   height: 100%;
   min-height: 0;
-  padding: 28px 32px 24px;
+  padding: 28px 0 24px;
   display: flex;
   flex-direction: column;
 }
 
 .cb-main-header {
   margin: -6px 0 32px;
-  margin-left: -15px;
+  margin-left: 25px;
 }
 
 .cb-main-title {
@@ -617,24 +617,6 @@
   padding: 4px 4px 8px 0;
 }
 
-.cb-chat-avatar {
-  width: 28px;
-  height: 28px;
-  border-radius: 999px;
-  overflow: hidden;
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin-left: -2px;
-}
-
-.cb-chat-avatar img {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-}
-
 /* 말풍선 한 줄 (좌/우 정렬) */
 .cb-chat-bubble-row {
   display: flex;
@@ -651,6 +633,7 @@
 /* 챗봇: 왼쪽 정렬 */
 .cb-chat-bubble-row-bot {
   justify-content: flex-start;
+  padding-left: 18px;
 }
 
 /* 말풍선 공통 */
@@ -870,8 +853,11 @@
    ========================= */
 
 .cb-faq-view {
-  max-width: 520px;
-  margin: 80px auto 24px;
+  width: 100%;  
+  max-width: 100%;   
+  margin: 56px auto 24px;   
+  padding: 0 16px;   
+  box-sizing: border-box;
 }
 
 .cb-faq-header {
@@ -913,13 +899,13 @@
   margin: 10px 0 24px;
 }
 
-/* 자주하는 질문 버튼 4개 (2 x 2 레이아웃) */
 .cb-faq-suggestions {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  column-gap: 16px;
-  row-gap: 12px;
-  max-width: 420px;
+  column-gap: 12px;
+  row-gap: 10px;
+  width: 100%;
+  max-width: 720px;
   margin: 0 auto;
 }
 
@@ -929,9 +915,12 @@
   border-radius: 999px;
   border: 1px solid #d4d4d4;
   background-color: #ffffff;
-  font-size: 13px;
+  font-size: 11px;
   cursor: pointer;
   box-shadow: 0 3px 6px rgba(0, 0, 0, 0.06);
+  white-space: nowrap;
+  overflow: hidden; 
+  text-overflow: ellipsis; 
 }
 
 .cb-faq-suggestion-btn:hover:not(:disabled) {
@@ -944,6 +933,36 @@
   cursor: default;
 }
 
+/* 홈 화면 – FAQ 섹션 전체 래퍼 */
+.cb-home-faq-section {
+  margin-top: 20px;
+  width: 100%;
+}
+
+/* FAQ 카테고리 필터 (전체 / 계정 / 전자결재 / 교육 / 기타) */
+.cb-faq-category-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.cb-faq-category-chip {
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid #e5e5e5;
+  background-color: #f9fafb;
+  font-size: 11px;
+  color: #4b5563;
+  cursor: pointer;
+}
+
+.cb-faq-category-chip.is-active {
+  background-color: #111827;
+  border-color: #111827;
+  color: #f9fafb;
+}
 
 .cb-welcome-row {
   display: flex;
@@ -974,38 +993,41 @@
 
 /* 기능 카드 컨테이너 */
 .cb-feature-container {
-  width: 100%;
-  max-width: 460px;
-  margin: 12px auto 0;
-  border-radius: 0;
-  border: none;
-  padding: 50px 10px 20px;
+  box-sizing: border-box;
+  width: clamp(640px, 78%, 900px);
+  margin: 32px auto 0;
+  padding: 0 clamp(12px, 3vw, 32px) 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;   
+}
+
+/* 아주 좁은 화면(모바일)일 때는 FAQ 버튼 1열로 */
+@media (max-width: 480px) {
+  .cb-faq-suggestions {
+    grid-template-columns: 1fr;
+  }
 }
 
 .cb-feature-row {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
+  width: 100%;
+  max-width: 720px;
+  display: grid;  
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
 }
 
 .cb-feature-card {
-  flex: 0 0 calc((100% - 3 * 12px) / 4);
-  max-width: none;
-  min-width: 60px;
-
-  height: 110px;
+  height: 80px;
   border-radius: 16px;
   border: 1px solid #d4d4d4;
   background-color: #ffffff;
   box-shadow: 0 3px 6px rgba(0, 0, 0, 0.08);
-
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 8px;
-
   cursor: pointer;
 }
 
@@ -1038,14 +1060,12 @@
 
 .cb-input-pill {
   margin: 0 auto;
-  width: 70%;
-  max-width: 420px;
+  width: 78%;
+  max-width: clamp(520px, 60%, 900px);
   min-width: 260px;
-
   display: flex;
   align-items: center;
   gap: 8px;
-
   border-radius: 999px;
   border: 1px solid #d4d4d4;
   background-color: #f7f7f7;
@@ -1104,6 +1124,13 @@
   justify-content: center;
 }
 
+.cb-input-title {
+  text-align: center;
+  font-size: 12px;
+  color: #a3a3a3;
+  margin: 0 0 6px;
+}
+
 .cb-send-icon {
   font-size: 12px;
 }
@@ -1120,14 +1147,6 @@
 
   .cb-sidebar {
     display: none;
-  }
-
-  .cb-main {
-    padding: 20px;
-  }
-
-  .cb-feature-container {
-    max-width: none;
   }
 
   .cb-input-pill {

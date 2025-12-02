@@ -6,7 +6,6 @@ export type ChatRole = "user" | "assistant";
 // 세션 도메인 타입
 export type ChatDomain =
   | "general"
-  | "policy"
   | "faq"
   | "quiz"
   | "edu"
@@ -35,9 +34,7 @@ export interface ChatMessage {
   content: string;
   createdAt: number;
 
-  /**
-   * 메시지 용도 (없으면 normal 취급)
-   */
+  /** 메시지 용도 (없으면 normal 취급) */
   kind?: ChatMessageKind;
 
   /**
@@ -103,10 +100,6 @@ export const DOMAIN_META: Record<ChatDomain, DomainMeta> = {
     label: "일반",
     description: "일반 상담 및 간단한 문의를 처리하는 기본 도메인입니다.",
   },
-  policy: {
-    label: "규정 안내",
-    description: "사내 인사/복지/보안 등 각종 규정과 관련된 질문을 처리합니다.",
-  },
   faq: {
     label: "FAQ",
     description: "자주 묻는 질문과 반복되는 문의를 빠르게 안내하는 영역입니다.",
@@ -121,6 +114,7 @@ export const DOMAIN_META: Record<ChatDomain, DomainMeta> = {
   },
   security: {
     label: "보안",
-    description: "정보보안, 계정/접근 권한, 보안 사고 대응과 관련된 질문입니다.",
+    description:
+      "정보보안, 계정/접근 권한, 보안 사고 대응과 관련된 질문입니다.",
   },
 };
