@@ -42,9 +42,37 @@ export interface EduPanelProps {
   onUpdateVideoProgress?: (videoId: string, progress: number) => void;
 }
 
+// 최소 크기는 기존과 비슷하게 유지
 const MIN_WIDTH = 520;
-const MIN_HEIGHT = 420;
-const INITIAL_SIZE: Size = { width: 540, height: 420 };
+const MIN_HEIGHT = 480;
+
+// 최대 폭(디자인 기준) + 화면 여백
+const MAX_WIDTH = 1360;
+const PANEL_MARGIN = 80;
+
+// 화면 크기에 맞게 "처음부터 크게" 띄우기 위한 초기 사이즈 계산 (목록 모드용)
+const createInitialSize = (): Size => {
+  if (typeof window === "undefined") {
+    // SSR 대비 혹시 모를 fallback
+    return { width: 960, height: 600 };
+  }
+
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+
+  // 좌우 80px, 상하 80px 정도 여백 남기고 패널 최대 크기 계산
+  const width = Math.max(
+    MIN_WIDTH,
+    Math.min(MAX_WIDTH, vw - PANEL_MARGIN)
+  );
+  const height = Math.max(MIN_HEIGHT, vh - PANEL_MARGIN);
+
+  return { width, height };
+};
+
+// 🔹 영상 시청 모드에서 사용할 "기존" 기본 사이즈
+//    (작은 패널 느낌을 위해 목록용보다 훨씬 작게 설정)
+const WATCH_DEFAULT_SIZE: Size = { width: 540, height: 480 };
 
 // URL 없는 카드용 fallback 비디오
 const SAMPLE_VIDEO_URL =
@@ -191,10 +219,10 @@ const EduPanel: React.FC<EduPanelProps> = ({
   videoProgressMap,
   onUpdateVideoProgress,
 }) => {
-  // 패널 크기 + 위치
-  const [size, setSize] = useState<Size>(INITIAL_SIZE);
+  // 패널 크기 + 위치 (처음에는 큰 목록용 사이즈로 시작)
+  const [size, setSize] = useState<Size>(() => createInitialSize());
   const [panelPos, setPanelPos] = useState(() =>
-    computePanelPosition(anchor ?? null, INITIAL_SIZE)
+    computePanelPosition(anchor ?? null, createInitialSize())
   );
 
   const resizeRef = useRef<ResizeState>({
@@ -202,18 +230,18 @@ const EduPanel: React.FC<EduPanelProps> = ({
     dir: null,
     startX: 0,
     startY: 0,
-    startWidth: INITIAL_SIZE.width,
-    startHeight: INITIAL_SIZE.height,
-    startTop: panelPos.top,
-    startLeft: panelPos.left,
+    startWidth: 0,
+    startHeight: 0,
+    startTop: 0,
+    startLeft: 0,
   });
 
   const dragRef = useRef<DragState>({
     dragging: false,
     startX: 0,
     startY: 0,
-    startTop: panelPos.top,
-    startLeft: panelPos.left,
+    startTop: 0,
+    startLeft: 0,
   });
 
   // 섹션별 페이지 인덱스만 state로 관리
@@ -429,6 +457,12 @@ const EduPanel: React.FC<EduPanelProps> = ({
     maxWatchedTimeRef.current = 0;
     videoDurationRef.current = 0;
     setIsPlaying(false);
+
+    // 🔹 시청 모드 들어갈 때는 패널을 "기존" 작은 사이즈로 변경
+    setSize(WATCH_DEFAULT_SIZE);
+    setPanelPos(
+      computePanelPosition(anchor ?? null, WATCH_DEFAULT_SIZE)
+    );
   };
 
   // 메타데이터 로딩 → 전체 길이 + 기존 진행률 위치로 이동
@@ -520,6 +554,11 @@ const EduPanel: React.FC<EduPanelProps> = ({
     maxWatchedTimeRef.current = 0;
     setWatchPercent(0);
     setIsPlaying(false);
+
+    // 🔹 다시 목록으로 돌아올 때는 화면에 꽉 차는 큰 사이즈로 복원
+    const listSize = createInitialSize();
+    setSize(listSize);
+    setPanelPos(computePanelPosition(anchor ?? null, listSize));
   };
 
   // 창 닫기 버튼 클릭 시에도 현재 시청 중이면 진행률 반영
