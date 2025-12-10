@@ -5,6 +5,10 @@ import MyPage from "./pages/MyPage";
 import ApprovalPage from "./pages/ApprovalPage";
 import MessagePage from "./pages/MessagePage";
 import EventPage from "./pages/EventPage";
+import NoticePage from "./pages/NoticePage";
+import OrgChartPage from "./pages/OrgChartPage";
+import EducationPage from "./pages/EducationPage";
+import EduApiTest from "./pages/EduApiTest";
 import Layout from "./components/Layout";
 
 export default function App() {
@@ -59,6 +63,46 @@ export default function App() {
         element={
           <Layout pageClassName="event-page">
             <EventPage />
+          </Layout>
+        }
+      />
+
+      {/* 공지사항 */}
+      <Route
+        path="/notice"
+        element={
+          <Layout pageClassName="notice-page">
+            <NoticePage />
+          </Layout>
+        }
+      />
+
+      {/* 조직도 */}
+      <Route
+        path="/orgchart"
+        element={
+          <Layout pageClassName="orgchart-page">
+            <OrgChartPage />
+          </Layout>
+        }
+      />
+
+      {/* 교육 API 테스트 */}
+      <Route
+        path="/edu-api-test"
+        element={
+          <Layout pageClassName="edu-api-test-page">
+            <EduApiTest />
+          </Layout>
+        }
+      />
+
+      {/* 교육 */}
+      <Route
+        path="/education"
+        element={
+          <Layout pageClassName="education-page">
+            <EducationPage />
           </Layout>
         }
       />

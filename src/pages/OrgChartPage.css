@@ -1,0 +1,316 @@
+/* 전체 레이아웃 */
+
+.dashboard-content.orgchart-layout {
+  padding: 24px 40px;
+  box-sizing: border-box;
+}
+
+/* 상단 헤더 */
+
+.orgchart-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.orgchart-header-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.orgchart-title {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 700;
+  color: #111827;
+}
+
+.orgchart-subtitle {
+  margin: 0;
+  font-size: 13px;
+  color: #6b7280;
+}
+
+.orgchart-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.orgchart-search-input {
+  min-width: 260px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid #e5e7eb;
+  background-color: #f9fafb;
+  font-size: 13px;
+  outline: none;
+}
+
+.orgchart-search-input:focus {
+  border-color: #4f46e5;
+  background-color: #ffffff;
+  box-shadow: 0 0 0 1px rgba(79, 70, 229, 0.08);
+}
+
+.orgchart-reset-btn {
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: none;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  background: #f3f4ff;
+  color: #4f46e5;
+}
+
+/* 본문 – 좌/우 영역 */
+
+.orgchart-body {
+  margin-top: 24px;
+  display: grid;
+  grid-template-columns: 210px minmax(0, 1fr);
+  gap: 24px;
+  align-items: stretch;
+}
+
+/* 왼쪽 부서 목록 */
+
+.orgchart-side-panel {
+  background-color: #ffffff;
+  border-radius: 32px;
+  padding: 24px 16px;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+  border: 1px solid #e5e7eb;
+}
+
+.orgchart-dept-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.orgchart-dept-item {
+  padding: 10px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+  display: flex;
+  flex-direction: column;
+}
+
+.orgchart-dept-item:hover {
+  background-color: #f3f4ff;
+}
+
+.orgchart-dept-item.active {
+  background-color: #4f46e5;
+  color: #ffffff;
+}
+
+.dept-name-main {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: inherit;
+}
+
+/* 오른쪽 트리 패널 */
+
+.orgchart-tree-panel {
+  background-color: #ffffff;
+  border-radius: 32px;
+  padding: 28px 36px 32px;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+  border: 1px solid #e5e7eb;
+  display: flex;
+  align-items: flex-start;
+  overflow: visible; /* 가로 스크롤 대신 scale로 해결 */
+}
+
+.orgchart-tree-inner {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.orgchart-tree-header {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.orgchart-tree-title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+  color: #111827;
+}
+
+.orgchart-tree-subtitle {
+  margin: 0;
+  font-size: 13px;
+  color: #6b7280;
+}
+
+/* 트리 wrapper + scale 컨테이너 */
+
+.org-tree-wrapper {
+  margin-top: 40px;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  overflow: visible;
+}
+
+.org-tree-scale {
+  display: inline-block;
+}
+
+/* === 트리 루트 컨테이너 === */
+
+.org-tree-root {
+  display: flex;
+  justify-content: center;
+}
+
+/* === 브랜치 구조 === */
+
+.org-branch {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/* 노드 카드 */
+
+.org-node-card {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 150px;
+  max-width: 200px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background-color: #f9fafb;
+  border: 1px solid #e5e7eb;
+  font-size: 11px;
+  box-sizing: border-box;
+}
+
+.org-node-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #111827;
+}
+
+.org-node-position {
+  margin-top: 2px;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #6b7280;
+}
+
+/* 팀장(루트) 노드 */
+
+.org-node-root {
+  background-color: #2563eb;
+  border-color: #2563eb;
+  box-shadow: 0 8px 20px rgba(37, 99, 235, 0.35);
+  min-width: 160px;
+  max-width: 210px;
+}
+
+.org-node-root .org-node-name,
+.org-node-root .org-node-position {
+  color: #ffffff;
+}
+
+/* 검색 하이라이트 */
+
+.org-node-highlight {
+  border-color: #4f46e5;
+  box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.25);
+}
+
+/* 부모-자식 연결 영역 */
+
+.org-branch-children {
+  margin-top: 16px;
+  position: relative;
+  padding-top: 24px;
+  display: inline-flex;
+  justify-content: center;
+}
+
+/* 부모에서 내려오는 세로선 */
+.org-branch-children::before {
+  content: "";
+  position: absolute;
+  top: -16px;
+  left: 50%;
+  width: 1px;
+  height: 16px;
+  background-color: #e5e7eb;
+}
+
+/* 자식들을 잇는 가로선 */
+.org-branch-horizontal-line {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background-color: #e5e7eb;
+}
+
+/* 자식 노드 행 */
+
+.org-branch-children-row {
+  margin-top: 24px;
+  display: inline-flex;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 32px;
+}
+
+/* 각 자식 컨테이너 */
+
+.org-branch-child {
+  position: relative;
+  padding-top: 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/* 가로선에서 자식으로 내려가는 세로선 */
+.org-branch-child::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 1px;
+  height: 24px;
+  background-color: #e5e7eb;
+}
+
+/* 반응형 */
+
+@media (max-width: 1024px) {
+  .orgchart-body {
+    grid-template-columns: 1fr;
+  }
+
+  .orgchart-tree-panel {
+    padding: 24px 20px 28px;
+  }
+}
