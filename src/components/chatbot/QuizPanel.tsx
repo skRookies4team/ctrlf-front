@@ -80,7 +80,7 @@ type ResultMessage = {
 };
 
 // 모달 안에서 쓸 텍스트 묶음 타입
-// 👉 요구사항에 따라 해설(개념 설명)만 노출
+// 해설(개념 설명)만 노출
 type ModalAnswerTexts = {
   explanation: string;
 };
@@ -182,7 +182,7 @@ const buildExplanation = (courseId: string, question: QuizQuestion): string => {
 };
 
 // (모달용) 현재 선택된 오답에 대한 해설만 계산
-// 👉 선택한 보기/정답 텍스트는 UI에 노출하지 않음
+// 선택한 보기/정답 텍스트는 UI에 노출하지 않음
 const getModalAnswerTexts = (entry: WrongAnswerEntry | null): ModalAnswerTexts => {
   if (!entry) {
     return {

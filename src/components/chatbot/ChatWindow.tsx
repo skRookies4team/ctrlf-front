@@ -23,7 +23,7 @@ import {
   type FaqCategory,
 } from "./faqData";
 
-// ✅ 사용자 Role 타입 (ChatbotApp / Layout 쪽과 동일)
+// 사용자 Role 타입 (ChatbotApp / Layout 쪽과 동일)
 type UserRole = "SYSTEM_ADMIN" | "EMPLOYEE";
 
 interface ChatWindowProps {
@@ -44,7 +44,7 @@ interface ChatWindowProps {
   onFeedbackChange?: (messageId: string, value: FeedbackValue) => void;
   // 신고 모달에서 제출 시
   onReportSubmit?: (payload: ReportPayload) => void;
-  // ✅ 사용자 Role (관리자 전용 뷰 등 확장용)
+  // 사용자 Role (관리자 전용 뷰 등 확장용)
   userRole: UserRole;
 }
 
@@ -198,7 +198,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
     }
   };
 
-  // 🔹 헤더의 FAQ 칩 클릭 시: 일반 도메인에서 FAQ 도메인으로 전환
+  // 헤더의 FAQ 칩 클릭 시: 일반 도메인에서 FAQ 도메인으로 전환
   const handleFaqChipClick = () => {
     if (isSending) return;
     onChangeDomain("faq");
@@ -494,7 +494,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
             {/* 메인 타이틀 우측 칩 – 채팅방(메시지가 있을 때)에서만 표시 */}
             {showHeaderChips && (
               <div className="cb-main-header-chips">
-                {/* 🔹 일반 도메인에서만 보이는 FAQ 칩 */}
+                {/* 일반 도메인에서만 보이는 FAQ 칩 */}
                 {isGeneralDomain && (
                   <button
                     type="button"

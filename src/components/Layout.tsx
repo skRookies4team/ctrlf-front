@@ -55,7 +55,7 @@ const Layout: React.FC<LayoutProps> = ({ children, pageClassName }) => {
   const isAuthenticated = !!keycloak.authenticated;
 
   /**
-   * ✅ Keycloak Role 기반 사용자 Role 계산
+   * Keycloak Role 기반 사용자 Role 계산
    *
    * - realm 레벨 Role: keycloak.realmAccess?.roles
    * - client 레벨 Role: keycloak.resourceAccess?.["ctrlf-frontend"]?.roles

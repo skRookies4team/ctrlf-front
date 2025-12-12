@@ -514,7 +514,7 @@ const OrgChartPage: React.FC = () => {
     (dept) => dept.id === selectedDeptId
   )!;
 
-  // 🔍 검색 핸들러 (useEffect 대신 이벤트 핸들러에서 state 변경)
+  // 검색 핸들러 (useEffect 대신 이벤트 핸들러에서 state 변경)
   const handleSearchChange = (
     e: React.ChangeEvent<HTMLInputElement>
   ) => {

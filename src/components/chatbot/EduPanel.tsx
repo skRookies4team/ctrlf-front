@@ -71,8 +71,8 @@ const createInitialSize = (): Size => {
   return { width, height };
 };
 
-// 🔹 영상 시청 모드에서 사용할 "기존" 기본 사이즈
-//    (작은 패널 느낌을 위해 목록용보다 훨씬 작게 설정)
+// 영상 시청 모드에서 사용할 "기존" 기본 사이즈
+// (작은 패널 느낌을 위해 목록용보다 훨씬 작게 설정)
 const WATCH_DEFAULT_SIZE: Size = { width: 540, height: 480 };
 
 // URL 없는 카드용 fallback 비디오
@@ -460,7 +460,7 @@ const EduPanel: React.FC<EduPanelProps> = ({
     videoDurationRef.current = 0;
     setIsPlaying(false);
 
-    // 🔹 시청 모드 들어갈 때는 패널을 "기존" 작은 사이즈로 변경
+    // 시청 모드 들어갈 때는 패널을 "기존" 작은 사이즈로 변경
     setSize(WATCH_DEFAULT_SIZE);
     setPanelPos(
       computePanelPosition(anchor ?? null, WATCH_DEFAULT_SIZE)
@@ -557,7 +557,7 @@ const EduPanel: React.FC<EduPanelProps> = ({
     setWatchPercent(0);
     setIsPlaying(false);
 
-    // 🔹 다시 목록으로 돌아올 때는 화면에 꽉 차는 큰 사이즈로 복원
+    // 다시 목록으로 돌아올 때는 화면에 꽉 차는 큰 사이즈로 복원
     const listSize = createInitialSize();
     setSize(listSize);
     setPanelPos(computePanelPosition(anchor ?? null, listSize));

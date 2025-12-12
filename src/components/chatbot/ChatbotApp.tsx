@@ -80,7 +80,7 @@ const initialSessions: ChatSession[] = [
   },
 ];
 
-// ✅ 사용자 Role 타입 (Layout/FloatingChatbotRoot와 동일하게 유지)
+// 사용자 Role 타입 (Layout/FloatingChatbotRoot와 동일하게 유지)
 type UserRole = "SYSTEM_ADMIN" | "EMPLOYEE";
 
 // "신고하고싶어", "괴롭힘을 신고하고 싶어요" 같은 문장을 잡아주는 간단한 헬퍼
@@ -278,7 +278,7 @@ const ChatbotApp: React.FC<ChatbotAppProps> = ({
     };
   }, [size.width, size.height]);
 
-  // ✅ 창 리사이즈 시 챗봇 패널 크기/위치를 화면 안으로 보정
+  // 창 리사이즈 시 챗봇 패널 크기/위치를 화면 안으로 보정
   useEffect(() => {
     if (typeof window === "undefined") return;
 

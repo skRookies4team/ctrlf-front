@@ -248,7 +248,7 @@ const ApprovalPage: React.FC = () => {
               onChange={(e) => {
                 const value = e.target.value;
                 setApproverInput(value);
-                // ✅ 입력이 바뀔 때마다 실시간 검색
+                // 입력이 바뀔 때마다 실시간 검색
                 void searchUsers(value);
               }}
               onKeyDown={(e) => {
@@ -269,7 +269,7 @@ const ApprovalPage: React.FC = () => {
             </button>
           </div>
 
-          {/* 🔍 검색 상태 / 자동완성 목록 */}
+          {/* 검색 상태 / 자동완성 목록 */}
           {isSearching && (
             <div className="approver-search-status">사용자 검색 중...</div>
           )}
