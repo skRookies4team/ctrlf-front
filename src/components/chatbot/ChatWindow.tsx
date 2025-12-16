@@ -3,6 +3,8 @@ import robotIcon from "../../assets/robot.png";
 import quizIcon from "../../assets/quiz.png";
 import eduIcon from "../../assets/edu.png";
 import adminIcon from "../../assets/admin-dashboard.png";
+import reviewIcon from "../../assets/review.png"; 
+import studioIcon from "../../assets/create.png";
 
 // 액션 아이콘
 import retryIcon from "../../assets/chat-retry.png"; // 다시 시도 아이콘
@@ -22,9 +24,7 @@ import {
   FAQ_CATEGORY_LABELS,
   type FaqCategory,
 } from "./faqData";
-
-// 사용자 Role 타입 (ChatbotApp / Layout 쪽과 동일)
-type UserRole = "SYSTEM_ADMIN" | "EMPLOYEE";
+import { can, getChatHeaderTitle, type UserRole } from "../../auth/roles";
 
 interface ChatWindowProps {
   activeSession: ChatSession | null;
@@ -46,6 +46,8 @@ interface ChatWindowProps {
   onReportSubmit?: (payload: ReportPayload) => void;
   // 사용자 Role (관리자 전용 뷰 등 확장용)
   userRole: UserRole;
+  onOpenReviewerPanel?: () => void;
+  onOpenCreatorPanel?: () => void;
 }
 
 // UI에서 사용하는 메시지 타입
@@ -95,6 +97,8 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
   onFeedbackChange,
   onReportSubmit,
   userRole,
+  onOpenReviewerPanel,
+  onOpenCreatorPanel,
 }) => {
   const [inputValue, setInputValue] = useState("");
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -114,7 +118,12 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
   const isGeneralDomain = currentDomain === "general";
 
   // Role 정보
-  const isAdmin = userRole === "SYSTEM_ADMIN";
+  const isAdmin = can(userRole, "OPEN_ADMIN_DASHBOARD");
+  const isReviewer = can(userRole, "OPEN_REVIEWER_DESK");
+  const isCreator = can(userRole, "OPEN_CREATOR_STUDIO");
+
+  // 홈 상단이 3카드(가운데 역할 카드 포함)인지
+  const hasMiddleRoleCard = isAdmin || isReviewer || isCreator;
 
   // 원본 세션 메시지 → UI 타입으로 캐스팅
   const rawMessages = activeSession?.messages ?? [];
@@ -192,10 +201,21 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
 
   // 관리자 카드 클릭 → 상위(FloatingChatbotRoot)에서 관리자 대시보드 패널 열기
   const handleOpenAdminDashboard = () => {
+    if (isSending) return;
     if (!isAdmin) return;
-    if (onOpenAdminPanel) {
-      onOpenAdminPanel();
-    }
+    onOpenAdminPanel?.();
+  };
+
+  const handleOpenReviewerDesk = () => {
+    if (isSending) return;
+    if (!isReviewer) return;
+    onOpenReviewerPanel?.();
+  };
+
+  const handleOpenCreatorStudio = () => {
+    if (isSending) return;
+    if (!isCreator) return;
+    onOpenCreatorPanel?.();
   };
 
   // 헤더의 FAQ 칩 클릭 시: 일반 도메인에서 FAQ 도메인으로 전환
@@ -471,12 +491,8 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
     );
   };
 
-  // 헤더 타이틀: FAQ 도메인 = FAQ, 그 외 = chatbot / chatbot (관리자)
-  const headerTitle = isFaqDomain
-    ? "FAQ"
-    : isAdmin
-      ? "chatbot (관리자)"
-      : "chatbot";
+  // 헤더 타이틀
+  const headerTitle = isFaqDomain ? "FAQ" : getChatHeaderTitle(userRole);
 
   // 메인(환영 화면)에서는 칩 숨기고, 채팅 메시지가 있는 "채팅방"에서만 칩 표시
   const showHeaderChips = hasMessages;
@@ -550,47 +566,52 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
                 {/* 상단 기능 카드: 퀴즈 / (관리자) / 교육 */}
                 <div
                   className={
-                    "cb-feature-row" + (isAdmin ? " cb-feature-row--admin" : "")
+                    "cb-feature-row" + (hasMiddleRoleCard ? " cb-feature-row--admin" : "")
                   }
                 >
-                  <button
-                    type="button"
-                    className="cb-feature-card"
-                    onClick={handleQuizClick}
-                  >
-                    <img
-                      src={quizIcon}
-                      alt="퀴즈"
-                      className="cb-feature-icon"
-                    />
+                  {/* 퀴즈 */}
+                  <button type="button" className="cb-feature-card" onClick={handleQuizClick}>
+                    <img src={quizIcon} alt="퀴즈" className="cb-feature-icon" />
                     <span className="cb-feature-label">퀴즈</span>
                   </button>
 
+                  {/* 가운데 역할 카드: 관리자/검토/제작 (서로 교체) */}
                   {isAdmin && (
                     <button
                       type="button"
                       className="cb-feature-card cb-feature-card-admin"
                       onClick={handleOpenAdminDashboard}
                     >
-                      <img
-                        src={adminIcon}
-                        alt="관리자 대시보드"
-                        className="cb-feature-icon"
-                      />
+                      <img src={adminIcon} alt="관리자 대시보드" className="cb-feature-icon" />
                       <span className="cb-feature-label">관리자</span>
                     </button>
                   )}
 
-                  <button
-                    type="button"
-                    className="cb-feature-card"
-                    onClick={handleEduClick}
-                  >
-                    <img
-                      src={eduIcon}
-                      alt="교육"
-                      className="cb-feature-icon"
-                    />
+                  {isReviewer && (
+                    <button
+                      type="button"
+                      className="cb-feature-card cb-feature-card-role"
+                      onClick={handleOpenReviewerDesk}
+                    >
+                      <img src={reviewIcon} alt="콘텐츠 검토" className="cb-feature-icon" />
+                      <span className="cb-feature-label">검토</span>
+                    </button>
+                  )}
+
+                  {isCreator && (
+                    <button
+                      type="button"
+                      className="cb-feature-card cb-feature-card-role"
+                      onClick={handleOpenCreatorStudio}
+                    >
+                      <img src={studioIcon} alt="교육 콘텐츠 제작" className="cb-feature-icon" />
+                      <span className="cb-feature-label">제작</span>
+                    </button>
+                  )}
+
+                  {/* 교육 */}
+                  <button type="button" className="cb-feature-card" onClick={handleEduClick}>
+                    <img src={eduIcon} alt="교육" className="cb-feature-icon" />
                     <span className="cb-feature-label">교육</span>
                   </button>
                 </div>

@@ -1,21 +1,17 @@
 // src/components/chatbot/FloatingChatbotRoot.tsx
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useReducer, useState } from "react";
 import FloatingDock from "./FloatingDock";
 import ChatbotApp from "./ChatbotApp";
 import EduPanel from "./EduPanel";
 import QuizPanel from "./QuizPanel";
 import AdminDashboardView from "./AdminDashboardView";
+import ReviewerDeskView from "./ReviewerDeskView";
+import CreatorStudioView from "./CreatorStudioView";
 import { initialCourses } from "./quizData";
 import type { Anchor } from "../../utils/chat";
+import { can, type UserRole } from "../../auth/roles";
 
 type VideoProgressMap = Record<string, number>;
-
-/**
- * EMPLOYEE / SYSTEM_ADMIN Role
- * - 현재는 둘 다 같은 디자인/플로우를 쓰지만,
- *   이후 관리자 전용 기능을 분기할 때 이 타입을 그대로 확장해서 사용.
- */
-type UserRole = "SYSTEM_ADMIN" | "EMPLOYEE";
 
 interface FloatingChatbotRootProps {
   userRole: UserRole;
@@ -24,8 +20,88 @@ interface FloatingChatbotRootProps {
 /**
  * 여러 패널을 동시에 띄우면서 z-index를 제어하기 위한 Panel ID
  */
-type PanelId = "chat" | "edu" | "quiz" | "admin";
-type PanelOpenState = Record<PanelId, boolean>;
+type PanelId = "chat" | "edu" | "quiz" | "admin" | "reviewer" | "creator";
+
+type PanelState = {
+  open: Record<PanelId, boolean>;
+  zOrder: PanelId[]; // 마지막이 최상단
+};
+
+type PanelAction =
+  | { type: "OPEN"; id: PanelId }
+  | { type: "OPEN_EXCLUSIVE"; id: PanelId; keep?: PanelId[] } // keep는 "열림 상태를 건드리지 않을 패널"
+  | { type: "CLOSE"; id: PanelId }
+  | { type: "FOCUS"; id: PanelId };
+
+const PANEL_IDS: PanelId[] = [
+  "chat",
+  "edu",
+  "quiz",
+  "admin",
+  "reviewer",
+  "creator",
+];
+
+const initialPanelState: PanelState = {
+  open: {
+    chat: false,
+    edu: false,
+    quiz: false,
+    admin: false,
+    reviewer: false,
+    creator: false,
+  },
+  zOrder: [...PANEL_IDS],
+};
+
+function bringToFront(order: PanelId[], id: PanelId): PanelId[] {
+  return [...order.filter((p) => p !== id), id];
+}
+
+function panelReducer(state: PanelState, action: PanelAction): PanelState {
+  switch (action.type) {
+    case "OPEN": {
+      return {
+        open: { ...state.open, [action.id]: true },
+        zOrder: bringToFront(state.zOrder, action.id),
+      };
+    }
+
+    case "FOCUS": {
+      return {
+        ...state,
+        zOrder: bringToFront(state.zOrder, action.id),
+      };
+    }
+
+    case "CLOSE": {
+      return {
+        ...state,
+        open: { ...state.open, [action.id]: false },
+      };
+    }
+
+    case "OPEN_EXCLUSIVE": {
+      const keep = new Set<PanelId>(action.keep ?? ["chat"]); // 기본: chat은 건드리지 않음(열림/닫힘 유지)
+      const nextOpen: Record<PanelId, boolean> = { ...state.open };
+
+      for (const pid of PANEL_IDS) {
+        if (pid === action.id) continue;
+        if (keep.has(pid)) continue;
+        nextOpen[pid] = false;
+      }
+      nextOpen[action.id] = true;
+
+      return {
+        open: nextOpen,
+        zOrder: bringToFront(state.zOrder, action.id),
+      };
+    }
+
+    default:
+      return state;
+  }
+}
 
 /**
  * 시험 중 챗봇 막힐 때 보여줄 토스트용 타이머 (모듈 전역)
@@ -68,9 +144,7 @@ const clampAnchorToViewport = (anchor: Anchor): Anchor => {
     y = rectAnchor.top;
   }
 
-  if (x === null || y === null) {
-    return anchor;
-  }
+  if (x === null || y === null) return anchor;
 
   const width =
     typeof rectAnchor.width === "number" && rectAnchor.width > 0
@@ -93,15 +167,12 @@ const clampAnchorToViewport = (anchor: Anchor): Anchor => {
   const clampedX = Math.min(Math.max(x, ANCHOR_MARGIN), maxX);
   const clampedY = Math.min(Math.max(y, ANCHOR_MARGIN), maxY);
 
-  const nextAnchor: AnchorWithOptionalRect = {
-    ...rectAnchor,
-  };
+  const nextAnchor: AnchorWithOptionalRect = { ...rectAnchor };
 
   if (typeof rectAnchor.x === "number" && typeof rectAnchor.y === "number") {
     nextAnchor.x = clampedX;
     nextAnchor.y = clampedY;
   }
-
   if (
     typeof rectAnchor.left === "number" &&
     typeof rectAnchor.top === "number"
@@ -185,9 +256,7 @@ const showExamBlockedToast = (): void => {
 
         window.setTimeout(() => {
           const el = document.getElementById(TOAST_ID);
-          if (el) {
-            el.remove();
-          }
+          if (el) el.remove();
         }, 260);
 
         if (examToastHideTimer !== null) {
@@ -218,18 +287,13 @@ const showExamBlockedToast = (): void => {
 
     window.setTimeout(() => {
       const toRemove = document.getElementById(TOAST_ID);
-      if (toRemove) {
-        toRemove.remove();
-      }
+      if (toRemove) toRemove.remove();
     }, 260);
 
     examToastHideTimer = null;
   }, 3200);
 };
 
-/**
- * 플로팅 아이콘 + 챗봇 패널 + 교육/퀴즈/관리자 패널의 "최상위 컨테이너"
- */
 const FloatingChatbotRoot: React.FC<FloatingChatbotRootProps> = ({
   userRole,
 }) => {
@@ -239,21 +303,7 @@ const FloatingChatbotRoot: React.FC<FloatingChatbotRootProps> = ({
   >(null);
   const [anchor, setAnchor] = useState<Anchor | null>(null);
 
-  // 여러 패널의 열린 상태를 하나의 객체로 관리
-  const [openPanels, setOpenPanels] = useState<PanelOpenState>({
-    chat: false,
-    edu: false,
-    quiz: false,
-    admin: false,
-  });
-
-  // z-index 우선순위 관리 (마지막에 있는 PanelId 가 가장 위)
-  const [zOrder, setZOrder] = useState<PanelId[]>([
-    "chat",
-    "edu",
-    "quiz",
-    "admin",
-  ]);
+  const [panels, dispatch] = useReducer(panelReducer, initialPanelState);
 
   const [isQuizExamMode, setIsQuizExamMode] = useState(false);
 
@@ -265,8 +315,7 @@ const FloatingChatbotRoot: React.FC<FloatingChatbotRootProps> = ({
     {}
   );
 
-  // chat 패널 열림 여부 (기존 isChatbotOpen 역할)
-  const isChatbotOpen = openPanels.chat;
+  const isChatbotOpen = panels.open.chat;
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -280,42 +329,11 @@ const FloatingChatbotRoot: React.FC<FloatingChatbotRootProps> = ({
     return () => window.removeEventListener("resize", handleResize);
   }, []);
 
-  /**
-   * z-index 계산: 기본 1000부터 시작해서 zOrder 순서대로 +1
-   */
   const getZIndexForPanel = (id: PanelId): number => {
     const base = 1000;
-    const idx = zOrder.indexOf(id);
+    const idx = panels.zOrder.indexOf(id);
     if (idx === -1) return base;
     return base + idx;
-  };
-
-  /**
-   * 특정 패널을 "맨 위"로 올림
-   */
-  const bringToFront = (id: PanelId) => {
-    setZOrder((prev) => [...prev.filter((p) => p !== id), id]);
-  };
-
-  /**
-   * 패널 열기 + z-order 최상단으로 이동
-   */
-  const openPanel = (id: PanelId) => {
-    setOpenPanels((prev) => ({
-      ...prev,
-      [id]: true,
-    }));
-    bringToFront(id);
-  };
-
-  /**
-   * 패널 닫기
-   */
-  const closePanel = (id: PanelId) => {
-    setOpenPanels((prev) => ({
-      ...prev,
-      [id]: false,
-    }));
   };
 
   const handleUpdateVideoProgress = (videoId: string, progress: number) => {
@@ -323,17 +341,12 @@ const FloatingChatbotRoot: React.FC<FloatingChatbotRootProps> = ({
       const prevVal = prev[videoId] ?? 0;
       const nextVal = Math.max(prevVal, Math.round(progress));
       if (nextVal === prevVal) return prev;
-      return {
-        ...prev,
-        [videoId]: nextVal,
-      };
+      return { ...prev, [videoId]: nextVal };
     });
   };
 
   /**
-   * 플로팅 Dock 아이콘 클릭 → 챗봇 토글
-   * - 열 때: chat 패널 open + z-order 맨 위 + opening 애니메이션
-   * - 닫을 때: closing 애니메이션 후, 애니메이션 끝에서 실제 closePanel("chat")
+   * Dock 아이콘 클릭 → 챗봇 토글
    */
   const handleDockToggleChatbot = (nextAnchor: Anchor) => {
     if (isQuizExamMode) {
@@ -345,7 +358,7 @@ const FloatingChatbotRoot: React.FC<FloatingChatbotRootProps> = ({
     setAnchor(safeAnchor);
 
     if (!isChatbotOpen) {
-      openPanel("chat");
+      dispatch({ type: "OPEN", id: "chat" });
       setChatbotAnimationState("opening");
     } else {
       setChatbotAnimationState("closing");
@@ -359,68 +372,71 @@ const FloatingChatbotRoot: React.FC<FloatingChatbotRootProps> = ({
 
   /**
    * Genie 애니메이션 종료 콜백
-   * - closing → 실제로 chat 패널 닫기
-   * - opening → 애니메이션 상태만 초기화
+   * - closing → chat 실제 닫기
    */
   const handleChatbotAnimationEnd = () => {
     if (chatbotAnimationState === "closing") {
-      closePanel("chat");
+      dispatch({ type: "CLOSE", id: "chat" });
       setChatbotAnimationState(null);
       return;
     }
-
     if (chatbotAnimationState === "opening") {
       setChatbotAnimationState(null);
     }
   };
 
   /**
-   * 교육 패널 열기
-   * - 기존처럼 챗봇과 함께 떠 있을 수 있음
-   * - 마지막에 연 패널이므로 z-order 최상단으로 올림
+   * - Secondary panel은 서로 배타적으로 운용
+   * - OPEN_EXCLUSIVE로 edu/quiz/admin/reviewer/creator는 한 번에 하나만
+   * - chat은 keep(default)로 "열림 상태 유지"
    */
   const handleOpenEduPanel = () => {
-    openPanel("edu");
+    dispatch({ type: "OPEN_EXCLUSIVE", id: "edu" });
   };
 
   const handleCloseEduPanel = () => {
-    closePanel("edu");
+    dispatch({ type: "CLOSE", id: "edu" });
   };
 
-  /**
-   * 퀴즈 패널 열기
-   * - 필요 시 코스 언락
-   * - 기존 흐름처럼 교육 패널은 닫고, 퀴즈 패널을 띄움
-   * - 마지막에 연 패널 → z-order 최상단
-   */
   const handleOpenQuizPanel = (quizId?: string) => {
     if (quizId) {
       setUnlockedCourseIds((prev) =>
         prev.includes(quizId) ? prev : [...prev, quizId]
       );
     }
-    closePanel("edu");
-    openPanel("quiz");
+    dispatch({ type: "OPEN_EXCLUSIVE", id: "quiz" });
   };
 
   const handleCloseQuizPanel = () => {
-    closePanel("quiz");
+    dispatch({ type: "CLOSE", id: "quiz" });
     setIsQuizExamMode(false);
   };
 
-  /**
-   * 관리자 대시보드 패널 열기/닫기
-   * - 기존처럼 Edu/Quiz 패널은 닫고, Admin 패널만 띄움
-   * - 마지막에 연 패널 → z-order 최상단
-   */
   const handleOpenAdminPanel = () => {
-    closePanel("edu");
-    closePanel("quiz");
-    openPanel("admin");
+    if (!can(userRole, "OPEN_ADMIN_DASHBOARD")) return;
+    dispatch({ type: "OPEN_EXCLUSIVE", id: "admin" });
   };
 
   const handleCloseAdminPanel = () => {
-    closePanel("admin");
+    dispatch({ type: "CLOSE", id: "admin" });
+  };
+
+  const handleOpenReviewerPanel = () => {
+    if (!can(userRole, "OPEN_REVIEWER_DESK")) return;
+    dispatch({ type: "OPEN_EXCLUSIVE", id: "reviewer" });
+  };
+
+  const handleCloseReviewerPanel = () => {
+    dispatch({ type: "CLOSE", id: "reviewer" });
+  };
+
+  const handleOpenCreatorPanel = () => {
+    if (!can(userRole, "OPEN_CREATOR_STUDIO")) return;
+    dispatch({ type: "OPEN_EXCLUSIVE", id: "creator" });
+  };
+
+  const handleCloseCreatorPanel = () => {
+    dispatch({ type: "CLOSE", id: "creator" });
   };
 
   const handleQuizExamModeChange = (isExamMode: boolean) => {
@@ -441,13 +457,13 @@ const FloatingChatbotRoot: React.FC<FloatingChatbotRootProps> = ({
       />
 
       {/* CHATBOT 패널 (Genie 애니메이션 + 플로팅) */}
-      {openPanels.chat && !isQuizExamMode && (
+      {panels.open.chat && !isQuizExamMode && (
         <div
           style={{
             position: "fixed",
             inset: 0,
             zIndex: getZIndexForPanel("chat"),
-            pointerEvents: "none", // 전체 덮는 레이어는 클릭 막지 않기
+            pointerEvents: "none",
           }}
         >
           <ChatbotApp
@@ -458,14 +474,16 @@ const FloatingChatbotRoot: React.FC<FloatingChatbotRootProps> = ({
             onOpenEduPanel={handleOpenEduPanel}
             onOpenQuizPanel={handleOpenQuizPanel}
             onOpenAdminPanel={handleOpenAdminPanel}
+            onOpenReviewerPanel={handleOpenReviewerPanel}
+            onOpenCreatorPanel={handleOpenCreatorPanel}
             userRole={userRole}
-            onRequestFocus={() => bringToFront("chat")} // 패널이 클릭되면 맨 앞으로
+            onRequestFocus={() => dispatch({ type: "FOCUS", id: "chat" })}
           />
         </div>
       )}
 
       {/* 교육 패널 */}
-      {openPanels.edu && (
+      {panels.open.edu && (
         <div
           style={{
             position: "fixed",
@@ -480,12 +498,13 @@ const FloatingChatbotRoot: React.FC<FloatingChatbotRootProps> = ({
             onOpenQuizPanel={handleOpenQuizPanel}
             videoProgressMap={videoProgressMap}
             onUpdateVideoProgress={handleUpdateVideoProgress}
-            onRequestFocus={() => bringToFront("edu")}   
+            onRequestFocus={() => dispatch({ type: "FOCUS", id: "edu" })}
           />
         </div>
       )}
 
-      {openPanels.quiz && (
+      {/* 퀴즈 패널 */}
+      {panels.open.quiz && (
         <div
           style={{
             position: "fixed",
@@ -500,12 +519,13 @@ const FloatingChatbotRoot: React.FC<FloatingChatbotRootProps> = ({
             onClose={handleCloseQuizPanel}
             unlockedCourseIds={unlockedCourseIds}
             onExamModeChange={handleQuizExamModeChange}
-            onRequestFocus={() => bringToFront("quiz")} 
+            onRequestFocus={() => dispatch({ type: "FOCUS", id: "quiz" })}
           />
         </div>
       )}
 
-      {openPanels.admin && (
+      {/* 관리자 대시보드 */}
+      {panels.open.admin && (
         <div
           style={{
             position: "fixed",
@@ -517,7 +537,47 @@ const FloatingChatbotRoot: React.FC<FloatingChatbotRootProps> = ({
           <AdminDashboardView
             anchor={anchor}
             onClose={handleCloseAdminPanel}
-            onRequestFocus={() => bringToFront("admin")} 
+            onRequestFocus={() => dispatch({ type: "FOCUS", id: "admin" })}
+          />
+        </div>
+      )}
+
+      {/* 검토 Desk */}
+      {panels.open.reviewer && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: getZIndexForPanel("reviewer"),
+            pointerEvents: "none",
+          }}
+        >
+          <ReviewerDeskView
+            anchor={anchor}
+            onClose={handleCloseReviewerPanel}
+            onRequestFocus={() =>
+              dispatch({ type: "FOCUS", id: "reviewer" })
+            }
+          />
+        </div>
+      )}
+
+      {/* 제작 Studio */}
+      {panels.open.creator && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: getZIndexForPanel("creator"),
+            pointerEvents: "none",
+          }}
+        >
+          <CreatorStudioView
+            anchor={anchor}
+            onClose={handleCloseCreatorPanel}
+            onRequestFocus={() =>
+              dispatch({ type: "FOCUS", id: "creator" })
+            }
           />
         </div>
       )}

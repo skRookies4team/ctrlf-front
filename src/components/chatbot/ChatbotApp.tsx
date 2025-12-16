@@ -22,6 +22,7 @@ import {
   type PanelSize,
 } from "../../utils/chat";
 import { FAQ_ITEMS } from "./faqData";
+import { can, type UserRole } from "../../auth/roles";
 
 interface ChatbotAppProps {
   onClose: () => void;
@@ -34,6 +35,8 @@ interface ChatbotAppProps {
   // Layout → FloatingChatbotRoot → 여기까지 전달되는 사용자 Role
   userRole: UserRole;
   onRequestFocus?: () => void;
+  onOpenReviewerPanel?: () => void;
+  onOpenCreatorPanel?: () => void;
 }
 
 type Size = PanelSize;
@@ -80,9 +83,6 @@ const initialSessions: ChatSession[] = [
   },
 ];
 
-// 사용자 Role 타입 (Layout/FloatingChatbotRoot와 동일하게 유지)
-type UserRole = "SYSTEM_ADMIN" | "EMPLOYEE";
-
 // "신고하고싶어", "괴롭힘을 신고하고 싶어요" 같은 문장을 잡아주는 간단한 헬퍼
 function shouldSuggestReport(raw: string): boolean {
   const compact = raw.replace(/\s+/g, ""); // 공백 제거
@@ -116,6 +116,8 @@ const ChatbotApp: React.FC<ChatbotAppProps> = ({
   onOpenAdminPanel,
   userRole,
   onRequestFocus,
+  onOpenReviewerPanel,
+  onOpenCreatorPanel,
 }) => {
   // 패널 크기 + 위치
   const [size, setSize] = useState<Size>(INITIAL_SIZE);
@@ -743,10 +745,30 @@ const ChatbotApp: React.FC<ChatbotAppProps> = ({
   };
 
   const handleOpenAdminPanelFromChat = () => {
+    if (!can(userRole, "OPEN_ADMIN_DASHBOARD")) return;
+
     if (onOpenAdminPanel) {
       onOpenAdminPanel();
     }
-    onClose(); // 관리자 패널이 열릴 때 챗봇 패널은 닫기 
+    onClose();
+  };
+
+  const handleOpenReviewerPanelFromChat = () => {
+    if (!can(userRole, "OPEN_REVIEWER_DESK")) return;
+
+    if (onOpenReviewerPanel) {
+      onOpenReviewerPanel();
+    }
+    onClose();
+  };
+
+  const handleOpenCreatorPanelFromChat = () => {
+    if (!can(userRole, "OPEN_CREATOR_STUDIO")) return;
+
+    if (onOpenCreatorPanel) {
+      onOpenCreatorPanel();
+    }
+    onClose();
   };
 
   // 지니 애니메이션 종료 이벤트
@@ -862,6 +884,8 @@ const ChatbotApp: React.FC<ChatbotAppProps> = ({
               onOpenEduPanel={handleOpenEduPanelFromChat}
               onOpenQuizPanel={handleOpenQuizPanelFromChat}
               onOpenAdminPanel={handleOpenAdminPanelFromChat}
+              onOpenReviewerPanel={handleOpenReviewerPanelFromChat}
+              onOpenCreatorPanel={handleOpenCreatorPanelFromChat}
               onFaqQuickSend={handleFaqQuickSend}
               onRetryFromMessage={handleRetryFromMessage}
               onFeedbackChange={handleFeedbackChange}

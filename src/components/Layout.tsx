@@ -8,6 +8,12 @@ import type { KeycloakTokenParsed } from "keycloak-js";
 import "../pages/Dashboard.css";
 import FloatingChatbotRoot from "./chatbot/FloatingChatbotRoot";
 
+import {
+  normalizeRoles,
+  pickPrimaryRole,
+  type UserRole,
+} from "../auth/roles";
+
 interface LayoutProps {
   children: React.ReactNode;
   pageClassName?: string;
@@ -19,9 +25,6 @@ interface CtrlfTokenParsed extends KeycloakTokenParsed {
   department?: string;
   position?: string;
 }
-
-// 사용자 Role 타입 (현재는 EMPLOYEE / SYSTEM_ADMIN 두 가지만 사용)
-type UserRole = "SYSTEM_ADMIN" | "EMPLOYEE";
 
 const Layout: React.FC<LayoutProps> = ({ children, pageClassName }) => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -59,18 +62,14 @@ const Layout: React.FC<LayoutProps> = ({ children, pageClassName }) => {
    *
    * - realm 레벨 Role: keycloak.realmAccess?.roles
    * - client 레벨 Role: keycloak.resourceAccess?.["ctrlf-frontend"]?.roles
-   *
-   *  두 군데를 합쳐서 SYSTEM_ADMIN 이 있는지 먼저 보고,
-   *  아니면 EMPLOYEE 로 처리 (기본은 일반 직원으로 간주)
    */
   const realmRoles = keycloak.realmAccess?.roles ?? [];
   const clientRoles =
     keycloak.resourceAccess?.["ctrlf-frontend"]?.roles ?? [];
-  const allRoles = [...realmRoles, ...clientRoles];
+  const rawRoles = Array.from(new Set([...realmRoles, ...clientRoles]));
 
-  const userRole: UserRole = allRoles.includes("SYSTEM_ADMIN")
-    ? "SYSTEM_ADMIN"
-    : "EMPLOYEE";
+  const roleSet = normalizeRoles(rawRoles);
+  const userRole: UserRole = pickPrimaryRole(roleSet);
 
   return (
     <div className={`dashboard-page ${pageClassName ?? ""}`}>
