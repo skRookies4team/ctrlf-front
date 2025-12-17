@@ -3,7 +3,7 @@ import robotIcon from "../../assets/robot.png";
 import quizIcon from "../../assets/quiz.png";
 import eduIcon from "../../assets/edu.png";
 import adminIcon from "../../assets/admin-dashboard.png";
-import reviewIcon from "../../assets/review.png"; 
+import reviewIcon from "../../assets/review.png";
 import studioIcon from "../../assets/create.png";
 
 // 액션 아이콘
@@ -217,6 +217,28 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
     if (!isCreator) return;
     onOpenCreatorPanel?.();
   };
+
+  // ===== 헤더에 표시할 "역할 칩" (관리자/검토/제작) =====
+  // NOTE: userRole 이 단일 primary role이라면 칩도 1개만 노출되게 우선순위로 결정
+  const roleChip = isAdmin
+    ? {
+      label: "관리자",
+      className: "cb-main-chip-role cb-main-chip-admin",
+      onClick: handleOpenAdminDashboard,
+    }
+    : isReviewer
+      ? {
+        label: "검토",
+        className: "cb-main-chip-role cb-main-chip-reviewer",
+        onClick: handleOpenReviewerDesk,
+      }
+      : isCreator
+        ? {
+          label: "제작",
+          className: "cb-main-chip-role cb-main-chip-creator",
+          onClick: handleOpenCreatorStudio,
+        }
+        : null;
 
   // 헤더의 FAQ 칩 클릭 시: 일반 도메인에서 FAQ 도메인으로 전환
   const handleFaqChipClick = () => {
@@ -510,6 +532,20 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
             {/* 메인 타이틀 우측 칩 – 채팅방(메시지가 있을 때)에서만 표시 */}
             {showHeaderChips && (
               <div className="cb-main-header-chips">
+                {/* 역할 칩 (관리자/검토/제작) */}
+                {roleChip && (
+                  <button
+                    type="button"
+                    className={`cb-main-chip-btn ${roleChip.className}`}
+                    onClick={roleChip.onClick}
+                    disabled={isSending}
+                    title={roleChip.label}
+                    aria-label={`${roleChip.label} 화면 열기`}
+                  >
+                    {roleChip.label}
+                  </button>
+                )}
+                
                 {/* 일반 도메인에서만 보이는 FAQ 칩 */}
                 {isGeneralDomain && (
                   <button

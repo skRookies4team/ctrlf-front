@@ -140,7 +140,7 @@
   padding: 0;
 
   /* 드래그바/헤더 위로 올려서 클릭을 확실히 받게 */
-  z-index: 50;
+  z-index: 30;
 
   pointer-events: auto;
   touch-action: none;
@@ -232,7 +232,7 @@
   position: absolute;
   top: 10px;
   right: 12px;
-  z-index: 5;
+  z-index: 40;
 
   width: 26px;
   height: 26px;
@@ -5907,121 +5907,6 @@
   }
 }
 
-/* =========================
-   Creator Studio (placeholder)
-   ========================= */
-
-.cb-creator-wrapper {
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-}
-
-.cb-creator-panel-container {
-  position: fixed;
-  pointer-events: auto;
-}
-
-.cb-creator-panel {
-  position: relative;
-  max-width: min(1160px, calc(100vw - 80px));
-  max-height: calc(100vh - 80px);
-  min-width: 860px;
-  min-height: 560px;
-  background-color: #ffffff;
-  border-radius: 22px;
-  border: 1px solid #e5e7eb;
-  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.18);
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-
-.cb-creator-header {
-  padding: 18px 20px 14px;
-  border-bottom: 1px solid #e5e7eb;
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 14px;
-}
-
-.cb-creator-badge {
-  display: inline-flex;
-  align-items: center;
-  padding: 4px 10px;
-  border-radius: 999px;
-  border: 1px solid #111827;
-  color: #111827;
-  background-color: #ffffff;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-}
-
-.cb-creator-title {
-  margin: 8px 0 0;
-  font-size: 18px;
-  font-weight: 800;
-  color: #111827;
-}
-
-.cb-creator-subtitle {
-  margin: 6px 0 0;
-  font-size: 12px;
-  line-height: 1.6;
-  color: #6b7280;
-}
-
-.cb-creator-close-btn {
-  width: 30px;
-  height: 30px;
-  border-radius: 999px;
-  border: 1px solid #e5e7eb;
-  background-color: #ffffff;
-  color: #111827;
-  cursor: pointer;
-  font-size: 14px;
-}
-
-.cb-creator-close-btn:hover {
-  background-color: #111827;
-  color: #ffffff;
-  border-color: #111827;
-}
-
-.cb-creator-body {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  background-color: #f9fafb;
-}
-
-.cb-creator-empty {
-  width: min(640px, 100%);
-  border-radius: 18px;
-  border: 1px solid #e5e7eb;
-  background-color: #ffffff;
-  padding: 18px;
-  text-align: left;
-}
-
-.cb-creator-empty-title {
-  font-size: 14px;
-  font-weight: 900;
-  color: #111827;
-}
-
-.cb-creator-empty-desc {
-  margin-top: 8px;
-  font-size: 12px;
-  line-height: 1.6;
-  color: #6b7280;
-}
-
 /* 패널 포커스(키보드 네비게이션용) */
 .cb-reviewer-panel:focus {
   outline: none;
@@ -6344,4 +6229,930 @@
 /* Reviewer Desk: 상세 헤더 좌측(제목/메타) 유연 레이아웃 */
 .cb-reviewer-detail-header-left {
   min-width: 0; /* 긴 제목/메타가 있을 때 flex 레이아웃 안정화 */
+}
+
+/* ================================
+   Creator Studio (VIDEO_CREATOR)
+================================ */
+
+/* overlay wrapper */
+.cb-creator-wrapper {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9998;
+}
+
+/* positioned container (top/left는 inline style로 주입됨) */
+.cb-creator-panel-container {
+  position: fixed;
+  pointer-events: auto;
+  z-index: 9999;
+  left: var(--cb-creator-x, 120px);
+  top: var(--cb-creator-y, 80px);
+  transform: none;
+}
+
+/* panel shell */
+.cb-creator-panel.cb-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  border-radius: 22px;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  box-shadow: 0 20px 60px rgba(17, 24, 39, 0.18);
+  overflow: hidden;
+  outline: none;
+  width: var(--cb-creator-w, 1080px);
+  height: var(--cb-creator-h, 680px);
+
+  min-width: 860px;
+  min-height: 560px;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+
+  transform: none;
+  will-change: auto;
+}
+
+.cb-creator-panel:focus {
+  box-shadow: 0 24px 72px rgba(17, 24, 39, 0.22);
+}
+
+/* (선택) 포커스/최상단 표시용 클래스 */
+.cb-creator-panel.cb-panel--focused {
+  box-shadow: 0 26px 78px rgba(17, 24, 39, 0.24);
+}
+
+/* header */
+.cb-creator-header {
+  padding: 16px 12px 14px 18px; 
+  border-bottom: 1px solid #e5e7eb;
+  background: #ffffff;
+  display: flex;
+  justify-content: flex-start; 
+  align-items: flex-start;
+  gap: 14px;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+.cb-creator-header:active {
+  cursor: grabbing;
+}
+
+/* 헤더 텍스트는 선택 가능 */
+.cb-creator-header-main,
+.cb-creator-header-main * {
+  user-select: text;
+}
+
+.cb-creator-header-main {
+  min-width: 0;
+  flex: 1 1 auto;
+  width: 100%; 
+  max-width: none;
+}
+
+.cb-creator-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.cb-creator-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid #e5e7eb;
+  background: #f9fafb;
+  color: #111827;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.cb-creator-title {
+  margin-top: 8px;
+  font-size: 18px;
+  font-weight: 900;
+  color: #111827;
+  line-height: 1.2;
+}
+
+.cb-creator-subtitle {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #6b7280;
+  line-height: 1.35;
+  max-width: 640px;
+}
+
+/* subtitle row: left subtitle + right create button */
+.cb-creator-subrow {
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 12px;
+  min-width: 0;
+  width: 100%;
+}
+
+.cb-creator-subrow .cb-creator-subtitle {
+  margin-top: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cb-creator-panel .cb-creator-create-btn {
+  flex: 0 0 auto;
+  height: 32px;
+  padding: 7px 14px;
+  margin-left: auto; 
+}
+
+/* body */
+.cb-creator-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: #ffffff;
+}
+
+/* layout container */
+.cb-creator-layout {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 360px minmax(0, 1fr);
+  height: 100%;
+}
+
+/* left column */
+.cb-creator-left {
+  background: #ffffff;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid #e5e7eb;
+  min-width: 0;
+}
+
+.cb-creator-left-top {
+  background: #ffffff;
+  padding: 14px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.cb-creator-tabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.cb-creator-spacer-10 {
+  height: 10px;
+}
+
+.cb-creator-search-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.cb-creator-search-input {
+  flex: 1;
+  height: 34px;
+  min-width: 0; /* 길이 과다로 레이아웃 깨짐 방지 */
+}
+
+.cb-creator-search-select {
+  height: 34px;
+
+  /* 과하게 길어지는 문제 방지 */
+  width: 140px;
+  max-width: 180px;
+  flex: 0 0 auto;
+}
+
+/* tabs row (TSX에서는 cb-reviewer-tab을 재사용하므로 panel scope로 스타일 적용) */
+.cb-creator-panel .cb-reviewer-tab {
+  border-radius: 999px;
+  border: 1px solid #e5e7eb;
+  background: #ffffff;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 800;
+  color: #111827;
+  cursor: pointer;
+  user-select: none;
+}
+
+/* 선택된 탭은 hover 영향 받지 않게 */
+.cb-creator-panel .cb-reviewer-tab:not(.cb-reviewer-tab--active):hover {
+  background: #f9fafb;
+}
+
+/* active 탭에 hover 올라와도 강제로 active 유지 */
+.cb-creator-panel .cb-reviewer-tab--active:hover {
+  background: #111827;
+  border-color: #111827;
+  color: #ffffff;
+}
+
+.cb-creator-panel .cb-reviewer-tab--active {
+  background: #111827;
+  border-color: #111827;
+  color: #ffffff;
+}
+
+/* list */
+.cb-creator-list {
+  background: #ffffff;
+  min-height: 0;
+  overflow: auto;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.cb-creator-panel .cb-reviewer-item {
+  width: 100%;
+  border-radius: 16px;
+  border: 1px solid #e5e7eb;
+  background: #ffffff;
+  padding: 12px 12px;
+  cursor: pointer;
+  transition: border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
+}
+
+/* 선택된 아이템은 hover 영향 받지 않게 */
+.cb-creator-panel .cb-reviewer-item:not(.cb-reviewer-item--active):hover {
+  border-color: #d1d5db;
+  box-shadow: 0 8px 18px rgba(17, 24, 39, 0.06);
+}
+
+/* active 아이템 hover도 active 느낌 유지 */
+.cb-creator-panel .cb-reviewer-item--active:hover {
+  border-color: #111827;
+  box-shadow: 0 8px 18px rgba(17, 24, 39, 0.10);
+}
+
+.cb-creator-panel .cb-reviewer-item--active {
+  border-color: #111827;
+  box-shadow: 0 8px 18px rgba(17, 24, 39, 0.10);
+}
+
+.cb-creator-panel .cb-reviewer-tab:focus-visible,
+.cb-creator-panel .cb-reviewer-item:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(17, 24, 39, 0.10);
+}
+
+.cb-creator-item {
+  text-align: left;
+}
+
+.cb-creator-item-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.cb-creator-item-main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.cb-creator-item-title {
+  font-size: 12px;
+  font-weight: 800;
+  color: #111827;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cb-creator-item-sub {
+  font-size: 11px;
+  color: #6b7280;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cb-creator-item-bottom {
+  margin-top: 8px;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.cb-creator-item-depts {
+  font-size: 11px;
+  color: #6b7280;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cb-creator-item-date {
+  font-size: 11px;
+  color: #6b7280;
+  white-space: nowrap;
+}
+
+/* empty state */
+.cb-creator-empty {
+  border-radius: 16px;
+  border: 1px dashed #e5e7eb;
+  background: #ffffff;
+  padding: 16px 14px;
+  text-align: left;
+}
+
+.cb-creator-empty-title {
+  font-size: 13px;
+  font-weight: 900;
+  color: #111827;
+}
+
+.cb-creator-empty-desc {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #6b7280;
+  line-height: 1.4;
+}
+
+/* right column */
+.cb-creator-right {
+  background: #ffffff;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.cb-creator-right-empty {
+  flex: 1;
+  min-height: 0;
+  padding: 16px;
+  background: #ffffff;
+}
+
+/* detail header */
+.cb-creator-detail-header {
+  padding: 14px 16px;
+  border-bottom: 1px solid #e5e7eb;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  background: #ffffff;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.cb-creator-detail-head-left {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.cb-creator-panel .cb-creator-detail-title,
+.cb-creator-panel .cb-reviewer-detail-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 제목 옆 뱃지/필 등은 줄어들지 않게 */
+.cb-creator-panel .cb-reviewer-pill {
+  flex: 0 0 auto;
+}
+
+.cb-creator-detail-title-row {
+  display: inline-flex;
+  max-width: 100%; 
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+  justify-content: flex-start;
+}
+
+.cb-creator-panel
+  .cb-creator-detail-title-row
+  .cb-reviewer-pill.cb-creator-detail-status {
+  margin-left: 8px !important;
+  margin-right: 0 !important;
+}
+
+.cb-creator-detail-title {
+  flex: 0 1 auto;  
+  max-width: clamp(220px, 52vw, 620px);
+  font-size: 14px;
+  font-weight: 900;
+  color: #111827;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.cb-creator-detail-subline {
+  margin-top: 4px;
+  font-size: 11px;
+  color: #6b7280;
+}
+
+.cb-creator-detail-header-actions {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+/* detail content scroll */
+.cb-creator-detail-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px;
+  background: #f9fafb;
+
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.cb-creator-detail-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* detail cards (TSX에서 cb-reviewer-detail-card 재사용) */
+.cb-creator-panel .cb-reviewer-detail-card {
+  border-radius: 18px;
+  border: 1px solid #e5e7eb;
+  background: #ffffff;
+  padding: 14px 14px;
+  box-shadow: 0 6px 16px rgba(17, 24, 39, 0.06);
+}
+
+.cb-creator-panel .cb-reviewer-detail-card-title {
+  font-size: 12px;
+  font-weight: 900;
+  color: #111827;
+}
+
+.cb-creator-panel .cb-reviewer-detail-card-desc {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #6b7280;
+  line-height: 1.45;
+}
+
+/* metadata grids/fields */
+.cb-creator-meta-grid2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.cb-creator-meta-grid2--mt {
+  margin-top: 10px;
+}
+
+.cb-creator-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cb-creator-field-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: #111827;
+}
+
+.cb-creator-checkbox-box {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid #d4d4d8;
+  background: #ffffff;
+}
+
+.cb-creator-checkitem {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #111827;
+}
+
+.cb-creator-muted {
+  font-size: 11px;
+  color: #6b7280;
+}
+
+.cb-creator-inline-box {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid #d4d4d8;
+  background: #ffffff;
+}
+
+.cb-creator-inline-text {
+  font-size: 11px;
+  color: #111827;
+}
+
+/* upload row */
+.cb-creator-upload-row {
+  display: flex;
+  gap: 10px;
+  margin-top: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.cb-creator-hidden-file-input {
+  display: none;
+}
+
+.cb-creator-upload-filename {
+  font-size: 11px;
+  color: #6b7280;
+}
+
+/* pipeline row */
+.cb-creator-pipeline-row {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.cb-creator-pipeline-status {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cb-creator-pipeline-status-title {
+  font-size: 11px;
+  font-weight: 800;
+  color: #111827;
+}
+
+.cb-creator-pipeline-status-desc {
+  font-size: 11px;
+  color: #6b7280;
+}
+
+.cb-creator-pipeline-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* progress bar */
+.cb-creator-progress {
+  margin-top: 10px;
+  height: 8px;
+  border-radius: 999px;
+  background: #e5e7eb;
+  overflow: hidden;
+}
+
+.cb-creator-progress-bar {
+  height: 100%;
+  width: 100%;
+  background: #111827;
+  transform-origin: left center;
+  transform: scaleX(var(--cb-creator-progress, 0));
+}
+
+/* preview */
+.cb-creator-preview-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 10px;
+  min-width: 0;
+}
+
+.cb-creator-preview-col {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.cb-creator-preview-label {
+  font-size: 11px;
+  font-weight: 800;
+  color: #111827;
+}
+
+/* textarea */
+.cb-creator-panel .cb-reviewer-textarea {
+  width: 100%;
+  border-radius: 14px;
+  border: 1px solid #d4d4d8;
+  background: #ffffff;
+  padding: 10px 12px;
+  font-size: 12px;
+  color: #111827;
+  line-height: 1.5;
+  outline: none;
+}
+
+.cb-creator-panel .cb-reviewer-textarea:focus {
+  border-color: #111827;
+  box-shadow: 0 0 0 3px rgba(17, 24, 39, 0.10);
+}
+
+.cb-creator-script-textarea {
+  height: 220px;
+  resize: vertical;
+}
+
+/* video frame */
+.cb-creator-video-frame {
+  height: 220px;
+  border-radius: 14px;
+  border: 1px solid #d4d4d8;
+  background: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cb-creator-video-placeholder {
+  text-align: center;
+  font-size: 11px;
+  color: #6b7280;
+}
+
+.cb-creator-video-subline {
+  margin-top: 6px;
+}
+
+/* validation list */
+.cb-creator-validation-list {
+  margin: 10px 0 0;
+  padding-left: 16px;
+  color: #111827;
+  font-size: 11px;
+}
+
+/* bottom action bar */
+.cb-creator-actionbar {
+  border-top: 1px solid #e5e7eb;
+  background: #ffffff;
+  padding: 12px 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.cb-creator-actionbar-hint {
+  font-size: 11px;
+  color: #6b7280;
+}
+
+.cb-creator-actionbar-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* pills (상태 뱃지) */
+.cb-creator-panel .cb-reviewer-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid #e5e7eb;
+  background: #f9fafb;
+  color: #111827;
+  font-size: 11px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.cb-creator-panel .cb-reviewer-pill--pending {
+  background: #f3f4f6;
+  border-color: #e5e7eb;
+  color: #111827;
+}
+
+.cb-creator-panel .cb-reviewer-pill--approved {
+  background: #111827;
+  border-color: #111827;
+  color: #ffffff;
+}
+
+.cb-creator-panel .cb-reviewer-pill--rejected {
+  background: #ffffff;
+  border-color: #111827;
+  color: #111827;
+}
+
+/* inputs/selects/buttons (Admin 공용 class를 Creator panel 내부에서만 스킨 적용) */
+.cb-creator-panel .cb-admin-input,
+.cb-creator-panel .cb-admin-select {
+  width: 100%;
+  border-radius: 12px;
+  border: 1px solid #d4d4d8;
+  background: #ffffff;
+  color: #111827;
+  font-size: 12px;
+  padding: 8px 10px;
+  outline: none;
+}
+
+.cb-creator-panel .cb-admin-input {
+  height: 34px;
+  padding: 0 10px;
+  line-height: 34px;
+  box-sizing: border-box;
+}
+
+/* select baseline 잘림 방지 (Windows/Chrome) */
+.cb-creator-panel .cb-admin-select {
+  height: 34px;
+  padding: 0 10px;
+  line-height: 34px;
+  box-sizing: border-box;
+}
+
+.cb-creator-panel .cb-admin-input:focus,
+.cb-creator-panel .cb-admin-select:focus {
+  border-color: #111827;
+  box-shadow: 0 0 0 3px rgba(17, 24, 39, 0.10);
+}
+
+.cb-creator-panel .cb-admin-input:disabled,
+.cb-creator-panel .cb-admin-select:disabled {
+  background: #f9fafb;
+  color: #9ca3af;
+  cursor: not-allowed;
+}
+
+.cb-creator-panel .cb-admin-primary-btn {
+  border-radius: 999px;
+  border: 1px solid #111827;
+  background: #111827;
+  color: #ffffff;
+  padding: 8px 14px;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.cb-creator-panel .cb-admin-primary-btn:hover {
+  filter: brightness(0.95);
+}
+
+.cb-creator-panel .cb-admin-primary-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.cb-creator-panel .cb-admin-ghost-btn {
+  border-radius: 999px;
+  border: 1px solid #d4d4d8;
+  background: #ffffff;
+  color: #111827;
+  padding: 8px 14px;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.cb-creator-panel .cb-admin-ghost-btn:hover {
+  border-color: #111827;
+}
+
+.cb-creator-panel .cb-admin-ghost-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* toast (Creator 전용: reviewer toast 충돌 제거) */
+.cb-creator-panel .cb-creator-toast {
+  position: absolute;
+  right: auto;
+  bottom: 16px;
+  left: 16px;
+
+  max-width: 380px;
+  border-radius: 14px;
+  border: 1px solid #e5e7eb;
+  background: #ffffff;
+  box-shadow: 0 18px 40px rgba(17, 24, 39, 0.16);
+  padding: 10px 12px;
+  font-size: 12px;
+  color: #111827;
+
+  pointer-events: none;
+  z-index: 30;
+}
+
+.cb-creator-panel .cb-creator-toast--success {
+  border-color: #d1d5db;
+}
+
+.cb-creator-panel .cb-creator-toast--info {
+  border-color: #d1d5db;
+}
+
+.cb-creator-panel .cb-creator-toast--error {
+  border-color: #111827;
+}
+
+/* scrollbar (선택: OS에 따라 다르게 보일 수 있음) */
+.cb-creator-panel *::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.cb-creator-panel *::-webkit-scrollbar-thumb {
+  background: #e5e7eb;
+  border-radius: 999px;
+  border: 2px solid #ffffff;
+}
+
+.cb-creator-panel *::-webkit-scrollbar-thumb:hover {
+  background: #d1d5db;
+}
+
+/* responsive: 좁은 뷰포트에서 2컬럼 → 1컬럼 */
+@media (max-width: 1040px) {
+  .cb-creator-panel.cb-panel {
+    min-width: 720px;
+  }
+
+  .cb-creator-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .cb-creator-left {
+    border-right: 0;
+    border-bottom: 1px solid #e5e7eb;
+  }
+}
+
+@media (max-width: 780px) {
+  .cb-creator-panel.cb-panel {
+    min-width: 0;
+    width: calc(100vw - 16px);
+  }
+
+  .cb-creator-search-select {
+    width: 120px;
+  }
+
+  .cb-creator-preview-grid {
+    grid-template-columns: 1fr;
+  }
 }
