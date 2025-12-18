@@ -12,15 +12,17 @@ import {
   deptLabel,
   formatDateTime,
   labelStatus,
-  labelTrainingType,
+  templateLabel,
+  jobTrainingLabel,
+  isJobCategory, // 직무/4대 판별 + Training UI 조건부
 } from "./creatorStudioMocks";
 import { useCreatorStudioController } from "./useCreatorStudioController";
 import type {
   CreatorSortMode,
   CreatorTabId,
   CreatorWorkItem,
-  TrainingType,
 } from "./creatorStudioTypes";
+import CreatorTrainingSelect from "./CreatorTrainingSelect";
 
 type Size = PanelSize;
 
@@ -73,6 +75,9 @@ const MIN_HEIGHT = 560;
 // 패널이 화면 밖으로 “완전히” 못 나가게 하는 여백
 const PANEL_PADDING = 24;
 
+// 소스 파일 허용 확장자(컨트롤러와 동일)
+const SOURCE_ACCEPT = ".pdf,.doc,.docx,.ppt,.pptx,.hwp,.hwpx";
+
 function clamp(n: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, n));
 }
@@ -83,7 +88,6 @@ function cx(...tokens: Array<string | false | null | undefined>) {
 
 /**
  * 뷰포트 크기를 기준으로 “허용 가능한 최대 패널 크기”를 계산
- * - 뷰포트가 작아도 max가 MIN보다 작아지지 않도록 방어
  */
 function getViewportMaxSize(): Size {
   if (typeof window === "undefined") return INITIAL_SIZE;
@@ -107,7 +111,6 @@ function fitSizeToViewport(desired: Size): Size {
 /**
  * 패널 이동 가능한 범위를 계산
  * - 패널이 뷰포트보다 클 때도 “드래그가 잠기지 않도록”
- *   min/max를 뒤집어(음수 포함) 범위를 만들어준다.
  */
 function getBounds(width: number, height: number) {
   if (typeof window === "undefined") {
@@ -150,9 +153,7 @@ function tabLabel(tab: CreatorTabId): string {
 function statusToneClass(status: CreatorWorkItem["status"]): string {
   switch (status) {
     case "DRAFT":
-      return "cb-reviewer-pill cb-reviewer-pill--pending";
     case "GENERATING":
-      return "cb-reviewer-pill cb-reviewer-pill--pending";
     case "REVIEW_PENDING":
       return "cb-reviewer-pill cb-reviewer-pill--pending";
     case "REJECTED":
@@ -166,16 +167,8 @@ function statusToneClass(status: CreatorWorkItem["status"]): string {
   }
 }
 
-function trainingTypeOptions(): Array<{ id: TrainingType; label: string }> {
-  return [
-    { id: "MANDATORY", label: "4대 의무교육" },
-    { id: "JOB", label: "직무교육" },
-    { id: "OTHER", label: "기타/전사" },
-  ];
-}
-
 /**
- * ✅ 커스텀 CSS 변수 타입 (no-explicit-any 회피)
+ * 커스텀 CSS 변수 타입 (no-explicit-any 회피)
  */
 type CreatorCSSVars = React.CSSProperties & {
   "--cb-creator-x"?: string;
@@ -184,6 +177,13 @@ type CreatorCSSVars = React.CSSProperties & {
   "--cb-creator-h"?: string;
   "--cb-creator-progress"?: string;
 };
+
+function formatBytes(bytes?: number) {
+  if (!bytes || bytes <= 0) return "";
+  const mb = bytes / (1024 * 1024);
+  if (mb < 1) return `${Math.max(1, Math.round(bytes / 1024))}KB`;
+  return `${mb.toFixed(1)}MB`;
+}
 
 const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
   anchor,
@@ -204,6 +204,10 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
   const {
     departments,
     categories,
+    templates,
+    jobTrainings,
+    creatorType,
+
     tab,
     setTab,
     query,
@@ -217,6 +221,7 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
     updateSelectedMeta,
     attachFileToSelected,
     runPipelineForSelected,
+    runVideoOnlyForSelected,
     retryPipelineForSelected,
     updateSelectedScript,
     requestReviewForSelected,
@@ -229,13 +234,15 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
     allowedDeptIds,
   });
 
+  const isDeptCreator = creatorType === "DEPT_CREATOR";
+
   /**
    * 초기 size를 “현재 뷰포트에 맞춰” 보정
    */
   const initialSizeRef = useRef<Size>(fitSizeToViewport(INITIAL_SIZE));
   const [size, setSize] = useState<Size>(initialSizeRef.current);
 
-  // 최신 size/pos 참조용 ref (window listener가 stale closure 안 쓰게)
+  // 최신 size/pos 참조용 ref
   const sizeRef = useRef<Size>(size);
   useEffect(() => {
     sizeRef.current = size;
@@ -258,12 +265,10 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
     panelPosRef.current = panelPos;
   }, [panelPos]);
 
-  // “사용자가 한번이라도 드래그/리사이즈로 위치를 잡았으면”
-  // anchor 변화로 자동 재배치하지 않게(계속 튀는 현상 방지)
+  // anchor 변화로 자동 재배치 튐 방지
   const userMovedRef = useRef(false);
   const didInitFromAnchorRef = useRef(false);
 
-  // 드래그/리사이즈 상태는 ref로 관리
   const resizeRef = useRef<ResizeState>({
     resizing: false,
     dir: null,
@@ -289,9 +294,7 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
   // detail scroll ref
   const detailScrollRef = useRef<HTMLDivElement | null>(null);
 
-  // anchor 변경 시 재배치:
-  // - 초기 1회는 anchor 기준으로 자리 잡기
-  // - 사용자가 움직였으면 이후 anchor 변화로는 “클램프만” 수행(재배치 금지)
+  // anchor 변경 시 재배치
   useEffect(() => {
     const currentSize = fitSizeToViewport(sizeRef.current);
 
@@ -304,7 +307,6 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
 
     const b = getBounds(currentSize.width, currentSize.height);
 
-    // 사용자가 이미 위치를 잡았다면: 현재 위치를 bounds 내로만 보정
     if (userMovedRef.current && didInitFromAnchorRef.current) {
       setPanelPos((p) => ({
         left: Math.round(clamp(p.left, b.minLeft, b.maxLeft)),
@@ -323,7 +325,7 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
     didInitFromAnchorRef.current = true;
   }, [anchor]);
 
-  // 창 크기 변경 시: size도 뷰포트에 맞게 보정 + pos clamp
+  // 창 크기 변경 시: size 보정 + pos clamp
   useEffect(() => {
     const handleWindowResize = () => {
       setSize((prev) => {
@@ -343,7 +345,7 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
     return () => window.removeEventListener("resize", handleWindowResize);
   }, []);
 
-  // window mousemove/mouseup (한 번만 설치 + ref로 최신값 사용)
+  // window mousemove/mouseup (한 번만 설치)
   useEffect(() => {
     const onMove = (event: MouseEvent) => {
       // resize
@@ -413,7 +415,6 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
         userMovedRef.current = true;
       }
 
-      // 선택 방지 해제
       if (typeof document !== "undefined") {
         document.body.style.userSelect = "";
       }
@@ -433,7 +434,6 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
       event.preventDefault();
       event.stopPropagation();
 
-      // 선택 방지
       if (typeof document !== "undefined") {
         document.body.style.userSelect = "none";
       }
@@ -452,12 +452,10 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
         startLeft: curPos.left,
       };
 
-      // 드래그도 끊기
       dragRef.current.dragging = false;
     };
 
   const handleHeaderMouseDown = (event: React.MouseEvent<HTMLDivElement>) => {
-    // input/textarea/select 클릭은 드래그로 취급하지 않음
     const tag = (event.target as HTMLElement)?.tagName?.toLowerCase();
     if (
       tag === "input" ||
@@ -470,7 +468,6 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
 
     event.preventDefault();
 
-    // 선택 방지
     if (typeof document !== "undefined") {
       document.body.style.userSelect = "none";
     }
@@ -508,8 +505,7 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
   const onFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
     if (!f) return;
-    attachFileToSelected(f.name);
-    // 같은 파일 재선택 허용
+    attachFileToSelected(f);
     e.target.value = "";
   };
 
@@ -517,7 +513,9 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
     !selectedItem ||
     selectedItem.status === "GENERATING" ||
     selectedItem.status === "REVIEW_PENDING" ||
-    selectedItem.status === "APPROVED";
+    selectedItem.status === "APPROVED" ||
+    selectedItem.status === "REJECTED" ||
+    selectedItem.pipeline?.state === "RUNNING";
 
   const progress = selectedItem?.pipeline?.progress ?? 0;
   const progressScale = clamp(progress / 100, 0, 1);
@@ -540,6 +538,31 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
     "--cb-creator-h": `${size.height}px`,
     "--cb-creator-progress": `${progressScale}`,
   };
+
+  const videoUrl = selectedItem?.assets?.videoUrl ?? "";
+  const isMockVideo = videoUrl.startsWith("mock://");
+  const canRenderVideoPlayer = videoUrl.length > 0 && !isMockVideo;
+
+  // 단일 축: 직무/4대(전사 필수)
+  const isJob = selectedItem ? isJobCategory(selectedItem.categoryId) : false;
+  const mandatoryByCategory = selectedItem ? !isJobCategory(selectedItem.categoryId) : false;
+
+  // effectiveMandatory: 4대면 무조건 true, 아니면 isMandatory
+  const effectiveMandatory = selectedItem
+    ? (mandatoryByCategory ? true : Boolean(selectedItem.isMandatory))
+    : false;
+
+  // 전사/부서 상호배타: targetDeptIds=[]가 “전사”
+  const isAllCompany = selectedItem
+    ? (effectiveMandatory ? true : selectedItem.targetDeptIds.length === 0)
+    : false;
+
+  // 스크립트 수정 후 “영상만 재생성” 조건
+  const hasScript = (selectedItem?.assets?.script?.trim().length ?? 0) > 0;
+  const hasSourceFile = (selectedItem?.assets?.sourceFileName ?? "").trim().length > 0;
+  const hasVideo = (selectedItem?.assets?.videoUrl ?? "").trim().length > 0;
+
+  const canVideoOnly = hasScript && hasSourceFile && !hasVideo;
 
   return (
     <div className="cb-creator-wrapper" aria-hidden={false}>
@@ -601,10 +624,7 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
           />
 
           {/* Header */}
-          <div
-            className="cb-creator-header"
-            onMouseDown={handleHeaderMouseDown}
-          >
+          <div className="cb-creator-header" onMouseDown={handleHeaderMouseDown}>
             <div className="cb-creator-header-main">
               <div className="cb-creator-badge">CREATOR STUDIO</div>
               <div className="cb-creator-title">교육 콘텐츠 제작</div>
@@ -633,13 +653,7 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
                 <div className="cb-creator-left-top">
                   <div className="cb-creator-tabs">
                     {(
-                      [
-                        "draft",
-                        "review_pending",
-                        "rejected",
-                        "approved",
-                        "failed",
-                      ] as CreatorTabId[]
+                      ["draft", "review_pending", "rejected", "approved", "failed"] as CreatorTabId[]
                     ).map((t) => (
                       <button
                         key={t}
@@ -661,7 +675,7 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
                   <div className="cb-creator-search-row">
                     <input
                       className={cx("cb-admin-input", "cb-creator-search-input")}
-                      placeholder="제목/카테고리/부서 검색"
+                      placeholder="제목/카테고리(직무/4대)/부서/템플릿/Training ID/버전 검색"
                       value={query}
                       onMouseDown={(e) => e.stopPropagation()}
                       onChange={(e) => setQuery(e.target.value)}
@@ -670,9 +684,7 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
                       className={cx("cb-admin-select", "cb-creator-search-select")}
                       value={sortMode}
                       onMouseDown={(e) => e.stopPropagation()}
-                      onChange={(e) =>
-                        setSortMode(e.target.value as CreatorSortMode)
-                      }
+                      onChange={(e) => setSortMode(e.target.value as CreatorSortMode)}
                     >
                       <option value="updated_desc">최근 수정</option>
                       <option value="created_desc">최근 생성</option>
@@ -691,44 +703,52 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
                       </div>
                     </div>
                   ) : (
-                    filteredItems.map((it) => (
-                      <button
-                        key={it.id}
-                        className={cx(
-                          "cb-reviewer-item",
-                          "cb-creator-item",
-                          selectedItem?.id === it.id &&
-                          "cb-reviewer-item--active"
-                        )}
-                        onMouseDown={(e) => e.stopPropagation()}
-                        onClick={() => selectItem(it.id)}
-                        type="button"
-                      >
-                        <div className="cb-creator-item-top">
-                          <div className="cb-creator-item-main">
-                            <div className="cb-creator-item-title">{it.title}</div>
-                            <div className="cb-creator-item-sub">
-                              {it.categoryLabel} · {labelTrainingType(it.trainingType)}
+                    filteredItems.map((it) => {
+                      const kindText = isJobCategory(it.categoryId) ? "직무" : "4대(전사필수)";
+                      const v = it.version ?? 1;
+                      return (
+                        <button
+                          key={it.id}
+                          className={cx(
+                            "cb-reviewer-item",
+                            "cb-creator-item",
+                            selectedItem?.id === it.id && "cb-reviewer-item--active"
+                          )}
+                          onMouseDown={(e) => e.stopPropagation()}
+                          onClick={() => selectItem(it.id)}
+                          type="button"
+                        >
+                          <div className="cb-creator-item-top">
+                            <div className="cb-creator-item-main">
+                              <div className="cb-creator-item-title">
+                                {it.title}{" "}
+                                <span className="cb-creator-muted">{`v${v}`}</span>
+                              </div>
+                              <div className="cb-creator-item-sub">
+                                {it.categoryLabel} · {kindText} · {templateLabel(it.templateId)}
+                                {it.jobTrainingId ? ` · ${jobTrainingLabel(it.jobTrainingId)}` : ""}
+                                {it.isMandatory ? " · 필수" : ""}
+                              </div>
+                            </div>
+
+                            <span className={statusToneClass(it.status)}>
+                              {labelStatus(it.status)}
+                            </span>
+                          </div>
+
+                          <div className="cb-creator-item-bottom">
+                            <div className="cb-creator-item-depts">
+                              {it.targetDeptIds.length === 0
+                                ? "전사"
+                                : it.targetDeptIds.map(deptLabel).join(", ")}
+                            </div>
+                            <div className="cb-creator-item-date">
+                              {formatDateTime(it.updatedAt)}
                             </div>
                           </div>
-
-                          <span className={statusToneClass(it.status)}>
-                            {labelStatus(it.status)}
-                          </span>
-                        </div>
-
-                        <div className="cb-creator-item-bottom">
-                          <div className="cb-creator-item-depts">
-                            {it.targetDeptIds.length === 0
-                              ? "전사"
-                              : it.targetDeptIds.map(deptLabel).join(", ")}
-                          </div>
-                          <div className="cb-creator-item-date">
-                            {formatDateTime(it.updatedAt)}
-                          </div>
-                        </div>
-                      </button>
-                    ))
+                        </button>
+                      );
+                    })
                   )}
                 </div>
               </div>
@@ -751,10 +771,14 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
                       <div className="cb-creator-detail-head-left">
                         <div className="cb-creator-detail-title-row">
                           <div className="cb-creator-detail-title">
-                            {selectedItem.title}
+                            {selectedItem.title}{" "}
+                            <span className="cb-creator-muted">{`v${selectedItem.version ?? 1}`}</span>
                           </div>
                           <span
-                            className={cx(statusToneClass(selectedItem.status), "cb-creator-detail-status")}
+                            className={cx(
+                              statusToneClass(selectedItem.status),
+                              "cb-creator-detail-status"
+                            )}
                           >
                             {labelStatus(selectedItem.status)}
                           </span>
@@ -767,25 +791,16 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
                       </div>
 
                       <div className="cb-creator-detail-header-actions">
-                        {selectedItem.status === "REJECTED" && (
+                        {(selectedItem.status === "DRAFT" ||
+                          selectedItem.status === "FAILED") && (
                           <button
                             className="cb-admin-ghost-btn"
                             onMouseDown={(e) => e.stopPropagation()}
-                            onClick={reopenRejectedToDraft}
+                            onClick={deleteDraft}
                           >
-                            초안으로 되돌리기
+                            삭제
                           </button>
                         )}
-                        {(selectedItem.status === "DRAFT" ||
-                          selectedItem.status === "FAILED") && (
-                            <button
-                              className="cb-admin-ghost-btn"
-                              onMouseDown={(e) => e.stopPropagation()}
-                              onClick={deleteDraft}
-                            >
-                              삭제
-                            </button>
-                          )}
                       </div>
                     </div>
 
@@ -796,31 +811,43 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
                         {selectedItem.status === "REJECTED" &&
                           selectedItem.rejectedComment && (
                             <div className="cb-reviewer-detail-card">
-                              <div className="cb-reviewer-detail-card-title">
-                                반려 사유
-                              </div>
+                              <div className="cb-reviewer-detail-card-title">반려 사유</div>
                               <div className="cb-reviewer-detail-card-desc">
                                 {selectedItem.rejectedComment}
+                              </div>
+                              <div className="cb-creator-spacer-8" />
+                              <div className="cb-creator-muted">
+                                반려 건은 읽기 전용입니다. 아래 “새 버전으로 편집”을 눌러 재작업을 시작하세요.
                               </div>
                             </div>
                           )}
 
-                        {selectedItem.status === "FAILED" &&
-                          selectedItem.failedReason && (
-                            <div className="cb-reviewer-detail-card">
-                              <div className="cb-reviewer-detail-card-title">
-                                생성 실패
-                              </div>
-                              <div className="cb-reviewer-detail-card-desc">
-                                {selectedItem.failedReason}
-                              </div>
+                        {selectedItem.status === "FAILED" && selectedItem.failedReason && (
+                          <div className="cb-reviewer-detail-card">
+                            <div className="cb-reviewer-detail-card-title">생성 실패</div>
+                            <div className="cb-reviewer-detail-card-desc">
+                              {selectedItem.failedReason}
                             </div>
-                          )}
+                          </div>
+                        )}
+
+                        {/* Version */}
+                        <div className="cb-reviewer-detail-card">
+                          <div className="cb-reviewer-detail-card-title">버전</div>
+                          <div className="cb-reviewer-detail-card-desc">
+                            현재 버전: <b>{`v${selectedItem.version ?? 1}`}</b>
+                            {Array.isArray(selectedItem.versionHistory) &&
+                            selectedItem.versionHistory.length > 0
+                              ? ` · 이전 버전 ${selectedItem.versionHistory.length}개 기록됨`
+                              : " · 이전 버전 기록 없음"}
+                          </div>
+                        </div>
 
                         {/* Metadata */}
                         <div className="cb-reviewer-detail-card">
                           <div className="cb-reviewer-detail-card-title">기본 정보</div>
 
+                          {/* row A */}
                           <div className="cb-creator-meta-grid2">
                             <label className="cb-creator-field">
                               <div className="cb-creator-field-label">제목</div>
@@ -857,86 +884,142 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
                                 ))}
                               </select>
                             </label>
+                          </div>
 
+                          {/* row B */}
+                          <div className="cb-creator-meta-grid2 cb-creator-meta-grid2--mt">
                             <label className="cb-creator-field">
-                              <div className="cb-creator-field-label">교육 유형</div>
+                              <div className="cb-creator-field-label">영상 템플릿</div>
                               <select
                                 className="cb-admin-select"
-                                value={selectedItem.trainingType}
+                                value={selectedItem.templateId ?? ""}
                                 disabled={disableMeta}
                                 onMouseDown={(e) => e.stopPropagation()}
                                 onChange={(e) =>
-                                  updateSelectedMeta({
-                                    trainingType: e.target.value as TrainingType,
-                                  })
+                                  updateSelectedMeta({ templateId: e.target.value })
                                 }
                               >
-                                {trainingTypeOptions().map((opt) => (
-                                  <option key={opt.id} value={opt.id}>
-                                    {opt.label}
+                                {templates.map((t) => (
+                                  <option key={t.id} value={t.id}>
+                                    {t.name}
                                   </option>
                                 ))}
                               </select>
                             </label>
 
+                            {/* jobTrainingId: 직무일 때만 활성 */}
                             <label className="cb-creator-field">
-                              <div className="cb-creator-field-label">
-                                예상 시청 시간(분)
-                              </div>
-                              <input
-                                className="cb-admin-input"
-                                type="number"
-                                min={1}
-                                value={selectedItem.estimatedMinutes}
-                                disabled={disableMeta}
-                                onMouseDown={(e) => e.stopPropagation()}
-                                onChange={(e) =>
-                                  updateSelectedMeta({
-                                    estimatedMinutes: Number(e.target.value),
-                                  })
-                                }
-                              />
+                              <div className="cb-creator-field-label">직무교육(Training ID)</div>
+
+                              {isJob ? (
+                                <CreatorTrainingSelect
+                                  value={selectedItem.jobTrainingId ?? ""}
+                                  options={jobTrainings}
+                                  disabled={disableMeta}
+                                  onChange={(nextId) =>
+                                    updateSelectedMeta({ jobTrainingId: nextId })
+                                  }
+                                />
+                              ) : (
+                                <select
+                                  className="cb-admin-select"
+                                  value=""
+                                  disabled
+                                  onMouseDown={(e) => e.stopPropagation()}
+                                >
+                                  <option value="">해당 없음 (4대 의무교육 카테고리)</option>
+                                </select>
+                              )}
                             </label>
                           </div>
 
+                          {/* row C */}
                           <div className="cb-creator-meta-grid2 cb-creator-meta-grid2--mt">
                             <label className="cb-creator-field">
                               <div className="cb-creator-field-label">대상 부서</div>
 
                               <div className="cb-creator-checkbox-box">
-                                {selectedItem.trainingType === "MANDATORY" ||
-                                  selectedItem.trainingType === "OTHER" ? (
-                                  <span className="cb-creator-muted">전사</span>
-                                ) : (
-                                  departments.map((d) => {
-                                    const checked = selectedItem.targetDeptIds.includes(
-                                      d.id
-                                    );
-                                    return (
-                                      <label key={d.id} className="cb-creator-checkitem">
-                                        <input
-                                          type="checkbox"
-                                          checked={checked}
-                                          disabled={disableMeta}
-                                          onMouseDown={(e) => e.stopPropagation()}
-                                          onChange={(e) => {
-                                            const next = e.target.checked
-                                              ? Array.from(
-                                                new Set([
-                                                  ...selectedItem.targetDeptIds,
-                                                  d.id,
-                                                ])
-                                              )
-                                              : selectedItem.targetDeptIds.filter(
-                                                (x) => x !== d.id
-                                              );
-                                            updateSelectedMeta({ targetDeptIds: next });
-                                          }}
-                                        />
-                                        {d.name}
-                                      </label>
-                                    );
-                                  })
+                                {/* 전사 대상 토글: targetDeptIds=[] */}
+                                <label className="cb-creator-checkitem">
+                                  <input
+                                    type="checkbox"
+                                    checked={isAllCompany}
+                                    disabled={
+                                      disableMeta ||
+                                      isDeptCreator ||
+                                      effectiveMandatory ||
+                                      mandatoryByCategory
+                                    }
+                                    onMouseDown={(e) => e.stopPropagation()}
+                                    onChange={(e) => {
+                                      if (e.target.checked) {
+                                        updateSelectedMeta({ targetDeptIds: [] });
+                                      } else {
+                                        const first = departments[0]?.id;
+                                        updateSelectedMeta({
+                                          targetDeptIds: first ? [first] : [],
+                                        });
+                                      }
+                                    }}
+                                  />
+                                  전사 대상(전체)
+                                </label>
+
+                                {mandatoryByCategory && (
+                                  <span className="cb-creator-muted">
+                                    4대 의무교육은 전사 대상으로 고정됩니다.
+                                  </span>
+                                )}
+
+                                {isDeptCreator && (
+                                  <span className="cb-creator-muted">
+                                    부서 제작자는 전사 대상으로 설정할 수 없습니다.
+                                  </span>
+                                )}
+
+                                {effectiveMandatory && !mandatoryByCategory && (
+                                  <span className="cb-creator-muted">
+                                    필수 교육은 전사 대상으로만 지정할 수 있습니다.
+                                  </span>
+                                )}
+
+                                <div className="cb-creator-spacer-8" />
+
+                                {/* 부서 체크 */}
+                                {!effectiveMandatory && !mandatoryByCategory && (
+                                  <>
+                                    {departments.map((d) => {
+                                      const checked =
+                                        !isAllCompany && selectedItem.targetDeptIds.includes(d.id);
+                                      const disabled = disableMeta || isAllCompany;
+                                      return (
+                                        <label key={d.id} className="cb-creator-checkitem">
+                                          <input
+                                            type="checkbox"
+                                            checked={checked}
+                                            disabled={disabled}
+                                            onMouseDown={(e) => e.stopPropagation()}
+                                            onChange={(e) => {
+                                              const base = isAllCompany ? [] : selectedItem.targetDeptIds;
+
+                                              const next = e.target.checked
+                                                ? Array.from(new Set([...base, d.id]))
+                                                : base.filter((x) => x !== d.id);
+
+                                              updateSelectedMeta({ targetDeptIds: next });
+                                            }}
+                                          />
+                                          {d.name}
+                                        </label>
+                                      );
+                                    })}
+
+                                    {isAllCompany && (
+                                      <span className="cb-creator-muted">
+                                        전사 대상을 선택하면 개별 부서 선택이 비활성화됩니다.
+                                      </span>
+                                    )}
+                                  </>
                                 )}
                               </div>
                             </label>
@@ -944,34 +1027,45 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
                             <label className="cb-creator-field">
                               <div className="cb-creator-field-label">필수 여부</div>
 
-                              <div className="cb-creator-inline-box">
-                                <input
-                                  type="checkbox"
-                                  checked={selectedItem.isMandatory}
-                                  disabled={disableMeta}
-                                  onMouseDown={(e) => e.stopPropagation()}
-                                  onChange={(e) =>
-                                    updateSelectedMeta({
-                                      isMandatory: e.target.checked,
-                                    })
-                                  }
-                                />
-                                <span className="cb-creator-inline-text">
-                                  {selectedItem.isMandatory ? "필수" : "선택"}
-                                </span>
-                              </div>
+                              {mandatoryByCategory ? (
+                                <div className="cb-creator-inline-box">
+                                  <span className="cb-creator-inline-text">
+                                    4대 의무교육은 <b>전사 필수</b>로 고정됩니다.
+                                  </span>
+                                </div>
+                              ) : (
+                                <div className="cb-creator-inline-box">
+                                  <input
+                                    type="checkbox"
+                                    checked={Boolean(selectedItem.isMandatory)}
+                                    disabled={disableMeta || isDeptCreator}
+                                    onMouseDown={(e) => e.stopPropagation()}
+                                    onChange={(e) =>
+                                      updateSelectedMeta({
+                                        isMandatory: e.target.checked,
+                                      })
+                                    }
+                                  />
+                                  <span className="cb-creator-inline-text">
+                                    {isDeptCreator
+                                      ? "부서 제작자는 지정 불가"
+                                      : selectedItem.isMandatory
+                                        ? "필수"
+                                        : "선택"}
+                                  </span>
+                                </div>
+                              )}
                             </label>
                           </div>
                         </div>
 
                         {/* Upload + Pipeline */}
                         <div className="cb-reviewer-detail-card">
-                          <div className="cb-reviewer-detail-card-title">
-                            자료 업로드 & 자동 생성
-                          </div>
+                          <div className="cb-reviewer-detail-card-title">자료 업로드 & 자동 생성</div>
                           <div className="cb-reviewer-detail-card-desc">
-                            PDF/PPT/HWP 등 자료를 업로드하면 스크립트(TTS) + 슬라이드 합성으로
-                            영상 초안을 생성합니다.
+                            자료(PDF/DOC/DOCX/PPT/PPTX/HWP/HWPX)를 업로드하면 스크립트(TTS) +
+                            슬라이드 합성으로 영상 초안을 생성합니다. 스크립트 수정 후에는{" "}
+                            <b>영상만 재생성</b>을 사용하세요.
                           </div>
 
                           <div className="cb-creator-upload-row">
@@ -986,14 +1080,23 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
                             <input
                               ref={fileInputRef}
                               type="file"
-                              accept=".pdf,.ppt,.pptx,.hwp,.hwpx,.png,.jpg,.jpeg"
+                              accept={SOURCE_ACCEPT}
                               className="cb-creator-hidden-file-input"
                               onChange={onFileChange}
                             />
                             <div className="cb-creator-upload-filename">
-                              {selectedItem.assets.sourceFileName
-                                ? `업로드됨: ${selectedItem.assets.sourceFileName}`
-                                : "업로드된 파일 없음"}
+                              {selectedItem.assets.sourceFileName ? (
+                                <>
+                                  업로드됨: {selectedItem.assets.sourceFileName}
+                                  {selectedItem.assets.sourceFileSize ? (
+                                    <span className="cb-creator-muted">
+                                      {` (${formatBytes(selectedItem.assets.sourceFileSize)})`}
+                                    </span>
+                                  ) : null}
+                                </>
+                              ) : (
+                                "업로드된 파일 없음"
+                              )}
                             </div>
                           </div>
 
@@ -1007,9 +1110,11 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
                               </div>
                               <div className="cb-creator-pipeline-status-desc">
                                 {selectedItem.pipeline.state !== "IDLE" &&
-                                  selectedItem.pipeline.progress > 0
+                                selectedItem.pipeline.progress > 0
                                   ? `진행률 ${selectedItem.pipeline.progress}%`
-                                  : "자동 생성 실행 전"}
+                                  : canVideoOnly
+                                    ? "스크립트/버전 변경으로 영상이 비어있습니다. 영상만 재생성하세요."
+                                    : "자동 생성 실행 전"}
                               </div>
                             </div>
 
@@ -1022,14 +1127,21 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
                                 >
                                   재시도
                                 </button>
+                              ) : canVideoOnly ? (
+                                <button
+                                  className="cb-admin-primary-btn"
+                                  onMouseDown={(e) => e.stopPropagation()}
+                                  onClick={runVideoOnlyForSelected}
+                                  disabled={disableMeta || selectedItem.status === "GENERATING"}
+                                >
+                                  영상만 재생성
+                                </button>
                               ) : (
                                 <button
                                   className="cb-admin-primary-btn"
                                   onMouseDown={(e) => e.stopPropagation()}
                                   onClick={runPipelineForSelected}
-                                  disabled={
-                                    disableMeta || selectedItem.status === "GENERATING"
-                                  }
+                                  disabled={disableMeta || selectedItem.status === "GENERATING"}
                                 >
                                   자동 생성 실행
                                 </button>
@@ -1037,7 +1149,7 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
                             </div>
                           </div>
 
-                          {/* progress bar (CSS var --cb-creator-progress 사용) */}
+                          {/* progress bar */}
                           <div className="cb-creator-progress">
                             <div className="cb-creator-progress-bar" />
                           </div>
@@ -1047,8 +1159,7 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
                         <div className="cb-reviewer-detail-card">
                           <div className="cb-reviewer-detail-card-title">미리보기</div>
                           <div className="cb-reviewer-detail-card-desc">
-                            생성된 스크립트/영상을 확인하고 필요한 경우 수정한 뒤 검토 요청을
-                            보냅니다.
+                            생성된 스크립트/영상을 확인하고 필요한 경우 수정한 뒤 검토 요청을 보냅니다.
                           </div>
 
                           <div className="cb-creator-preview-grid">
@@ -1070,13 +1181,23 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
                             <div className="cb-creator-preview-col">
                               <div className="cb-creator-preview-label">영상</div>
                               <div className="cb-creator-video-frame">
-                                {selectedItem.assets.videoUrl ? (
-                                  <div className="cb-creator-video-placeholder">
-                                    (mock) video: {selectedItem.assets.videoUrl}
-                                    <div className="cb-creator-video-subline">
-                                      실제 연동 시 video player로 교체
+                                {videoUrl ? (
+                                  canRenderVideoPlayer ? (
+                                    <video
+                                      className="cb-creator-video-player"
+                                      src={videoUrl}
+                                      controls
+                                      preload="metadata"
+                                      playsInline
+                                    />
+                                  ) : (
+                                    <div className="cb-creator-video-placeholder">
+                                      (mock) video: {videoUrl}
+                                      <div className="cb-creator-video-subline">
+                                        실제 연동 시 HTML5 video player가 재생됩니다.
+                                      </div>
                                     </div>
-                                  </div>
+                                  )
                                 ) : (
                                   <div className="cb-creator-video-placeholder">
                                     아직 생성된 영상이 없습니다.
@@ -1088,23 +1209,21 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
                         </div>
 
                         {/* Validation issues */}
-                        {!selectedValidation.ok &&
-                          (selectedItem.status === "DRAFT" ||
-                            selectedItem.status === "REJECTED") && (
-                            <div className="cb-reviewer-detail-card">
-                              <div className="cb-reviewer-detail-card-title">
-                                검토 요청 전 체크
-                              </div>
-                              <div className="cb-reviewer-detail-card-desc">
-                                아래 항목을 충족해야 검토 요청을 보낼 수 있습니다.
-                              </div>
-                              <ul className="cb-creator-validation-list">
-                                {selectedValidation.issues.map((it, idx) => (
-                                  <li key={idx}>{it}</li>
-                                ))}
-                              </ul>
+                        {!selectedValidation.ok && selectedItem.status === "DRAFT" && (
+                          <div className="cb-reviewer-detail-card">
+                            <div className="cb-reviewer-detail-card-title">
+                              검토 요청 전 체크
                             </div>
-                          )}
+                            <div className="cb-reviewer-detail-card-desc">
+                              아래 항목을 충족해야 검토 요청을 보낼 수 있습니다.
+                            </div>
+                            <ul className="cb-creator-validation-list">
+                              {selectedValidation.issues.map((it, idx) => (
+                                <li key={idx}>{it}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
                       </div>
                     </div>
 
@@ -1115,22 +1234,34 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
                           ? "검토 대기 중입니다. 검토자는 승인/반려 처리 후 결과를 남깁니다."
                           : selectedItem.status === "APPROVED"
                             ? "승인/게시 상태입니다. 제작자는 수정/재배포에 개입할 수 없습니다."
-                            : "초안 상태에서 자동 생성/수정 후 검토 요청을 제출하세요."}
+                            : selectedItem.status === "REJECTED"
+                              ? "반려되었습니다. ‘새 버전으로 편집’ 후 수정/재생성하고 다시 검토 요청을 제출하세요."
+                              : canVideoOnly
+                                ? "스크립트/버전 변경으로 영상이 비어있습니다. 영상만 재생성 후 검토 요청을 제출하세요."
+                                : "초안 상태에서 자동 생성/수정 후 검토 요청을 제출하세요."}
                       </div>
 
                       <div className="cb-creator-actionbar-actions">
-                        <button
-                          className="cb-admin-primary-btn"
-                          onMouseDown={(e) => e.stopPropagation()}
-                          onClick={requestReviewForSelected}
-                          disabled={
-                            !selectedValidation.ok ||
-                            (selectedItem.status !== "DRAFT" &&
-                              selectedItem.status !== "REJECTED")
-                          }
-                        >
-                          검토 요청
-                        </button>
+                        {selectedItem.status === "REJECTED" ? (
+                          <button
+                            className="cb-admin-primary-btn"
+                            onMouseDown={(e) => e.stopPropagation()}
+                            onClick={reopenRejectedToDraft}
+                          >
+                            새 버전으로 편집
+                          </button>
+                        ) : (
+                          <button
+                            className="cb-admin-primary-btn"
+                            onMouseDown={(e) => e.stopPropagation()}
+                            onClick={requestReviewForSelected}
+                            disabled={
+                              !selectedValidation.ok || selectedItem.status !== "DRAFT"
+                            }
+                          >
+                            검토 요청
+                          </button>
+                        )}
                       </div>
                     </div>
                   </>

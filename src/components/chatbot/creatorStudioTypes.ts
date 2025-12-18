@@ -2,14 +2,6 @@
 
 export type CreatorType = "DEPT_CREATOR" | "GLOBAL_CREATOR";
 
-/**
- * 교육 유형 (Use Case 기준)
- * - MANDATORY: 4대 법정의무교육
- * - JOB: 부서 직무교육
- * - OTHER: 기타/전사 공통
- */
-export type TrainingType = "MANDATORY" | "JOB" | "OTHER";
-
 export type CreatorStatus =
   | "DRAFT"
   | "GENERATING"
@@ -26,7 +18,21 @@ export interface DepartmentOption {
   name: string;
 }
 
+export type CategoryKind = "JOB" | "MANDATORY";
+
 export interface CategoryOption {
+  id: string;
+  name: string;
+  kind: CategoryKind;
+}
+
+export interface VideoTemplateOption {
+  id: string;
+  name: string;
+  description?: string;
+}
+
+export interface JobTrainingOption {
   id: string;
   name: string;
 }
@@ -54,31 +60,40 @@ export interface CreatorPipeline {
   startedAt?: number;
   finishedAt?: number;
   message?: string;
+  mode?: "FULL" | "VIDEO_ONLY";
 }
 
 export interface CreatorAssets {
   sourceFileName?: string;
+  sourceFileSize?: number;   // bytes
+  sourceFileMime?: string;   // file.type
+
   script?: string;
-  videoUrl?: string; // 추후 CDN URL
+  videoUrl?: string;
   thumbnailUrl?: string;
 }
 
 export interface CreatorWorkItem {
   id: string;
 
+  version: number; // v1, v2...
+  versionHistory: CreatorVersionSnapshot[];
+
   title: string;
-  trainingType: TrainingType;
   categoryId: string;
   categoryLabel: string;
+
+  /** 영상 생성 템플릿(배경/자막 스타일 등) */
+  templateId: string;
+
+  /** 직무교육인 경우 연결되는 직무교육 ID(Stub) */
+  jobTrainingId?: string;
 
   /** 교육 대상 부서(직무교육이면 보통 1개, 전사/4대교육은 전체 가능) */
   targetDeptIds: string[];
 
   /** UI에서 “필수” 토글용 (직무교육도 필수/선택이 가능하다는 가정) */
   isMandatory: boolean;
-
-  /** 예상 시청 시간(분) */
-  estimatedMinutes: number;
 
   status: CreatorStatus;
 
@@ -100,4 +115,22 @@ export interface CreatorWorkItem {
 export interface CreatorValidationResult {
   ok: boolean;
   issues: string[];
+}
+
+export interface CreatorVersionSnapshot {
+  version: number;
+  submittedAt: number; // 검토 요청 제출 시각
+  note?: string;
+
+  // 제출 당시 상태(보통 REVIEW_PENDING으로 기록)
+  status: CreatorStatus;
+
+  // 제출 당시 메타/자산 스냅샷
+  title: string;
+  categoryId: string;
+  categoryLabel: string;
+  templateId: string;
+  jobTrainingId?: string;
+  targetDeptIds: string[];
+  assets: CreatorAssets;
 }
