@@ -3,7 +3,7 @@ name: Frontend React Deploy
 on:
   push:
     branches: [ "main" ] # main 브랜치에 push될 때 실행
-    paths: [ "ctrlf-front/**" ] # frontend 폴더 내 파일이 변경될 때만 실행
+    #paths: [ "ctrlf-front/**" ] # frontend 폴더 내 파일이 변경될 때만 실행
 
 jobs:
   build-and-deploy:
