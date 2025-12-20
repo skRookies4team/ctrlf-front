@@ -1,0 +1,40 @@
+name: Frontend React Deploy
+
+on:
+  push:
+    branches: [ "main" ] # main 브랜치에 push될 때 실행
+    paths: [ "ctrlf-front/**" ] # frontend 폴더 내 파일이 변경될 때만 실행
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18' # 프로젝트에 맞는 노드 버전
+
+      - name: Install dependencies
+        run: |
+          cd frontend
+          npm install
+
+      - name: Build project
+        run: |
+          cd frontend
+          npm run build
+
+      - name: Deploy to S3
+        uses: jakejarvis/s3-sync-action@master
+        with:
+          args: --delete # S3에 있는 옛날 파일은 삭제하고 동기화
+        env:
+          AWS_S3_BUCKET: "ctrl-s3" # 생성한 버킷 이름
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: 'ap-northeast-2' # 서울 리전
+          SOURCE_DIR: 'frontend/build' # 빌드된 결과물 위치
