@@ -242,7 +242,29 @@ const ReviewerDeskView: React.FC<ReviewerDeskViewProps> = ({
     moveSelection,
     lastRefreshedAtLabel,
     devtools,
+    stageFilter,
+    setStageFilter,
+    stageCounts,
   } = desk;
+
+  // selectedItem 선언(구조분해) 이후에 계산해야 TS/ESLint 경고 없음
+  const approvalCtx = React.useMemo(() => {
+    if (!selectedItem) {
+      return { stage: null as 1 | 2 | null, publishOnApprove: false, label: "승인" };
+    }
+
+    if (selectedItem.contentType === "VIDEO") {
+      const stage: 1 | 2 = selectedItem.videoUrl?.trim() ? 2 : 1;
+      return {
+        stage,
+        publishOnApprove: stage === 2,
+        label: stage === 2 ? "2차 승인" : "1차 승인",
+      };
+    }
+
+    // VIDEO가 아닌 문서/정책은 ‘최종 승인 = 즉시 공개’로 보는 게 자연스러움
+    return { stage: null as 1 | 2 | null, publishOnApprove: true, label: "승인" };
+  }, [selectedItem]);
 
   const titleId = `cb-reviewer-title-${uid}`;
   const subtitleId = `cb-reviewer-sub-${uid}`;
@@ -384,27 +406,28 @@ const ReviewerDeskView: React.FC<ReviewerDeskViewProps> = ({
     };
   }, []);
 
-  const handleResizeMouseDown = (dir: ResizeDirection) => (event: React.MouseEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
+  const handleResizeMouseDown =
+    (dir: ResizeDirection) => (event: React.MouseEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
 
-    if (typeof document !== "undefined") {
-      document.body.style.userSelect = "none";
-      document.body.style.cursor = cursorForResizeDir(dir);
-    }
+      if (typeof document !== "undefined") {
+        document.body.style.userSelect = "none";
+        document.body.style.cursor = cursorForResizeDir(dir);
+      }
 
-    resizeRef.current = {
-      resizing: true,
-      dir,
-      startX: event.clientX,
-      startY: event.clientY,
-      startWidth: sizeRef.current.width,
-      startHeight: sizeRef.current.height,
-      startTop: posRef.current.top,
-      startLeft: posRef.current.left,
+      resizeRef.current = {
+        resizing: true,
+        dir,
+        startX: event.clientX,
+        startY: event.clientY,
+        startWidth: sizeRef.current.width,
+        startHeight: sizeRef.current.height,
+        startTop: posRef.current.top,
+        startLeft: posRef.current.left,
+      };
+      dragRef.current.dragging = false;
     };
-    dragRef.current.dragging = false;
-  };
 
   const handleDragMouseDown = (event: React.MouseEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -427,7 +450,10 @@ const ReviewerDeskView: React.FC<ReviewerDeskViewProps> = ({
 
   return (
     <div className="cb-reviewer-wrapper">
-      <div className="cb-reviewer-panel-container" style={{ top: panelPos.top, left: panelPos.left }}>
+      <div
+        className="cb-reviewer-panel-container"
+        style={{ top: panelPos.top, left: panelPos.left }}
+      >
         <div
           ref={panelRef}
           className="cb-reviewer-panel cb-chatbot-panel"
@@ -442,14 +468,38 @@ const ReviewerDeskView: React.FC<ReviewerDeskViewProps> = ({
         >
           <div className="cb-drag-bar" onMouseDown={handleDragMouseDown} />
 
-          <div className="cb-resize-handle cb-resize-handle-corner cb-resize-handle-nw" onMouseDown={handleResizeMouseDown("nw")} />
-          <div className="cb-resize-handle cb-resize-handle-corner cb-resize-handle-ne" onMouseDown={handleResizeMouseDown("ne")} />
-          <div className="cb-resize-handle cb-resize-handle-corner cb-resize-handle-sw" onMouseDown={handleResizeMouseDown("sw")} />
-          <div className="cb-resize-handle cb-resize-handle-corner cb-resize-handle-se" onMouseDown={handleResizeMouseDown("se")} />
-          <div className="cb-resize-handle cb-resize-handle-edge cb-resize-handle-n" onMouseDown={handleResizeMouseDown("n")} />
-          <div className="cb-resize-handle cb-resize-handle-edge cb-resize-handle-s" onMouseDown={handleResizeMouseDown("s")} />
-          <div className="cb-resize-handle cb-resize-handle-edge cb-resize-handle-w" onMouseDown={handleResizeMouseDown("w")} />
-          <div className="cb-resize-handle cb-resize-handle-edge cb-resize-handle-e" onMouseDown={handleResizeMouseDown("e")} />
+          <div
+            className="cb-resize-handle cb-resize-handle-corner cb-resize-handle-nw"
+            onMouseDown={handleResizeMouseDown("nw")}
+          />
+          <div
+            className="cb-resize-handle cb-resize-handle-corner cb-resize-handle-ne"
+            onMouseDown={handleResizeMouseDown("ne")}
+          />
+          <div
+            className="cb-resize-handle cb-resize-handle-corner cb-resize-handle-sw"
+            onMouseDown={handleResizeMouseDown("sw")}
+          />
+          <div
+            className="cb-resize-handle cb-resize-handle-corner cb-resize-handle-se"
+            onMouseDown={handleResizeMouseDown("se")}
+          />
+          <div
+            className="cb-resize-handle cb-resize-handle-edge cb-resize-handle-n"
+            onMouseDown={handleResizeMouseDown("n")}
+          />
+          <div
+            className="cb-resize-handle cb-resize-handle-edge cb-resize-handle-s"
+            onMouseDown={handleResizeMouseDown("s")}
+          />
+          <div
+            className="cb-resize-handle cb-resize-handle-edge cb-resize-handle-w"
+            onMouseDown={handleResizeMouseDown("w")}
+          />
+          <div
+            className="cb-resize-handle cb-resize-handle-edge cb-resize-handle-e"
+            onMouseDown={handleResizeMouseDown("e")}
+          />
 
           {/* Toast */}
           {toast.open && (
@@ -481,7 +531,11 @@ const ReviewerDeskView: React.FC<ReviewerDeskViewProps> = ({
                 </h2>
               </div>
               <p id={subtitleId} className="cb-reviewer-subtitle">
-                검토 대기 콘텐츠를 승인/반려하고 감사 이력을 남깁니다. (승인 시 즉시 공개)
+                검토 대기 콘텐츠를 승인/반려하고 감사 이력을 남깁니다.
+                {selectedItem &&
+                  (approvalCtx.publishOnApprove
+                    ? " (승인 시 즉시 공개)"
+                    : " (1차 승인은 공개되지 않으며, 제작자가 영상 제작을 진행합니다.)")}
               </p>
               <div className="cb-reviewer-context">
                 {busyText && (
@@ -573,6 +627,9 @@ const ReviewerDeskView: React.FC<ReviewerDeskViewProps> = ({
               setPageSize={setPageSize}
               totalPages={totalPages}
               pageItems={pageItems}
+              stageFilter={stageFilter}
+              setStageFilter={setStageFilter}
+              stageCounts={stageCounts}
             />
 
             <div className="cb-reviewer-detail">
@@ -598,6 +655,8 @@ const ReviewerDeskView: React.FC<ReviewerDeskViewProps> = ({
                 rejectProcessing={rejectProcessing}
                 onApprove={openApproveModal}
                 onReject={openRejectModal}
+                approveLabel={approvalCtx.label}
+                approveProcessingLabel={`${approvalCtx.label} 중…`}
               />
             </div>
           </div>
@@ -614,6 +673,8 @@ const ReviewerDeskView: React.FC<ReviewerDeskViewProps> = ({
             previewOpen={previewOpen}
             onClosePreview={closePreview}
             previewItem={selectedItem}
+            approveLabel={approvalCtx.label}
+            approveProcessingLabel={`${approvalCtx.label} 처리 중…`}
           />
         </div>
       </div>

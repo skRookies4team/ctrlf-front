@@ -27,6 +27,10 @@ import type {
   CreatorSortMode,
   DepartmentOption,
 } from "./creatorStudioTypes";
+import {
+  listReviewItemsSnapshot,
+  submitCreatorReviewRequest,
+} from "./reviewFlowStore";
 
 type ToastKind = "success" | "error" | "info";
 
@@ -149,21 +153,30 @@ function uniq<T>(arr: T[]): T[] {
   return Array.from(new Set(arr));
 }
 
-function tabMatchesStatus(
-  tab: CreatorTabId,
-  status: CreatorWorkItem["status"]
-): boolean {
+function tabMatchesStatus(tab: CreatorTabId, item: CreatorWorkItem): boolean {
+  const stage1Approved = getScriptApprovedAt(item) != null;
+
   switch (tab) {
     case "draft":
-      return status === "DRAFT" || status === "GENERATING";
+      // 초안 탭에서는 "1차 승인 완료된 초안(DRAFT+scriptApprovedAt)"은 제외 (중복 방지)
+      return (item.status === "DRAFT" || item.status === "GENERATING") && !stage1Approved;
+
     case "review_pending":
-      return status === "REVIEW_PENDING";
+      return item.status === "REVIEW_PENDING";
+
     case "rejected":
-      return status === "REJECTED";
+      return item.status === "REJECTED";
+
     case "approved":
-      return status === "APPROVED";
+      // 승인 탭 = 2차 최종 승인(APPROVED) + 1차 승인 완료(DRAFT/GENERATING + scriptApprovedAt)
+      return (
+        item.status === "APPROVED" ||
+        ((item.status === "DRAFT" || item.status === "GENERATING") && stage1Approved)
+      );
+
     case "failed":
-      return status === "FAILED";
+      return item.status === "FAILED";
+
     default:
       return true;
   }
@@ -207,18 +220,24 @@ function isLockedForEdit(item: CreatorWorkItem): boolean {
 function hadGeneratedOutput(item: CreatorWorkItem): boolean {
   return Boolean(
     item.assets.videoUrl ||
-      item.assets.thumbnailUrl ||
-      item.pipeline.state === "SUCCESS"
+    item.assets.thumbnailUrl ||
+    item.pipeline.state === "SUCCESS"
   );
 }
 
-function resetPipeline(): CreatorWorkItem["pipeline"] {
-  return { state: "IDLE", stage: null, progress: 0 };
+const PIPELINE_MODE_FULL = "FULL" as CreatorWorkItem["pipeline"]["mode"];
+const PIPELINE_MODE_VIDEO_ONLY =
+  "VIDEO_ONLY" as CreatorWorkItem["pipeline"]["mode"];
+const PIPELINE_MODE_SCRIPT_ONLY =
+  "SCRIPT_ONLY" as CreatorWorkItem["pipeline"]["mode"];
+
+function resetPipeline(
+  mode: CreatorWorkItem["pipeline"]["mode"] = PIPELINE_MODE_FULL
+): CreatorWorkItem["pipeline"] {
+  return { mode, state: "IDLE", stage: null, progress: 0 };
 }
 
-function clearGeneratedAllAssets(
-  item: CreatorWorkItem
-): CreatorWorkItem["assets"] {
+function clearGeneratedAllAssets(item: CreatorWorkItem): CreatorWorkItem["assets"] {
   return {
     ...item.assets,
     script: "",
@@ -227,9 +246,7 @@ function clearGeneratedAllAssets(
   };
 }
 
-function clearVideoAssetsOnly(
-  item: CreatorWorkItem
-): CreatorWorkItem["assets"] {
+function clearVideoAssetsOnly(item: CreatorWorkItem): CreatorWorkItem["assets"] {
   return {
     ...item.assets,
     videoUrl: "",
@@ -263,9 +280,37 @@ function categoryKindText(categoryId: string): string {
   return `4대 mandatory ${String(kind).toLowerCase()}`;
 }
 
+/**
+ * stage 판별: scriptApprovedAt은 number/string/0/빈문자 등 케이스를 안전하게 처리한다.
+ * - number: >0만 승인으로 인정
+ * - string: 숫자 문자열 또는 ISO/date parse 가능하면 >0만 승인
+ */
+function getScriptApprovedAt(item: unknown): number | null {
+  if (!item || typeof item !== "object") return null;
+  const v = (item as Record<string, unknown>)["scriptApprovedAt"];
+
+  if (typeof v === "number" && Number.isFinite(v)) {
+    return v > 0 ? v : null;
+  }
+
+  if (typeof v === "string") {
+    const s = v.trim();
+    if (!s) return null;
+
+    const n = Number(s);
+    if (Number.isFinite(n)) return n > 0 ? n : null;
+
+    const t = Date.parse(s);
+    return Number.isFinite(t) && t > 0 ? t : null;
+  }
+
+  return null;
+}
+
 function validateForReview(
   item: CreatorWorkItem,
-  ctx: ReviewScopeContext
+  ctx: ReviewScopeContext,
+  mode: "SCRIPT" | "FINAL"
 ): CreatorValidationResult {
   const issues: string[] = [];
 
@@ -302,12 +347,30 @@ function validateForReview(
     issues.push("교육 자료 파일이 너무 큽니다. (최대 50MB)");
   }
 
-  if (!item.assets.script) issues.push("스크립트가 생성되지 않았습니다.");
-  if (!item.assets.videoUrl) issues.push("영상이 생성되지 않았습니다.");
-  if (item.pipeline.state !== "SUCCESS")
-    issues.push("자동 생성이 완료되지 않았습니다.");
+  // 스크립트
+  const hasScript = Boolean(item.assets.script && item.assets.script.trim().length > 0);
+  if (!hasScript) issues.push("스크립트가 준비되지 않았습니다.");
 
-  // 제출 상태 제한
+  // FINAL(2차)일 때만 영상 필요
+  if (mode === "FINAL") {
+    const hasVideo = Boolean(item.assets.videoUrl && item.assets.videoUrl.trim().length > 0);
+    if (!hasVideo) issues.push("영상이 생성되지 않았습니다.");
+  }
+
+  /**
+   * 중요 패치:
+   * - SCRIPT(1차) 모드에서는 pipeline SUCCESS를 강제하지 않는다.
+   *   (스크립트를 생성 후 수정하거나, 수동으로 작성해도 1차 검토 요청 가능해야 함)
+   * - 다만 RUNNING이면 요청 금지 (실행 중에는 제출 불가)
+   */
+  if (item.pipeline.state === "RUNNING") {
+    issues.push("자동 생성이 진행 중입니다. 완료 후 검토 요청이 가능합니다.");
+  }
+  if (item.pipeline.state === "FAILED") {
+    // 상태상 DRAFT/FAILED 등이 섞일 수 있어 안전장치로 메시지 보강
+    issues.push("자동 생성이 실패했습니다. 재시도 후 검토 요청이 가능합니다.");
+  }
+
   if (item.status !== "DRAFT") {
     issues.push("초안(DRAFT) 상태에서만 검토 요청이 가능합니다.");
   }
@@ -335,9 +398,7 @@ function validateForReview(
     if (!item.targetDeptIds || item.targetDeptIds.length === 0) {
       issues.push("부서 제작자는 대상 부서를 최소 1개 이상 선택해야 합니다.");
     } else if (allowedDeptIds && allowedDeptIds.length > 0) {
-      const invalid = item.targetDeptIds.filter(
-        (id) => !allowedDeptIds.includes(id)
-      );
+      const invalid = item.targetDeptIds.filter((id) => !allowedDeptIds.includes(id));
       if (invalid.length > 0) {
         issues.push("대상 부서에 허용되지 않은 부서가 포함되어 있습니다.");
       }
@@ -367,27 +428,195 @@ function validateForReview(
 function shouldUseVideoOnly(item: CreatorWorkItem): boolean {
   const hasScript = Boolean(item.assets.script && item.assets.script.trim().length > 0);
   const hasFile = Boolean(item.assets.sourceFileName);
-  const noVideo = !item.assets.videoUrl;
-  return hasScript && hasFile && noVideo;
+  const hasVideo = Boolean(item.assets.videoUrl && item.assets.videoUrl.trim().length > 0);
+  return hasScript && hasFile && !hasVideo;
 }
 
-export function useCreatorStudioController(
-  options?: UseCreatorStudioControllerOptions
-) {
+type ReviewStoreItem = ReturnType<typeof listReviewItemsSnapshot>[number];
+
+function readNum(obj: unknown, key: string): number | undefined {
+  if (!obj || typeof obj !== "object") return undefined;
+  const v = (obj as Record<string, unknown>)[key];
+  return typeof v === "number" ? v : undefined;
+}
+
+function readStr(obj: unknown, key: string): string | undefined {
+  if (!obj || typeof obj !== "object") return undefined;
+  const v = (obj as Record<string, unknown>)[key];
+  return typeof v === "string" ? v : undefined;
+}
+
+function reviewHasVideo(r: ReviewStoreItem): boolean {
+  const v = (r as { videoUrl?: string }).videoUrl ?? "";
+  return v.trim().length > 0;
+}
+
+function reviewStageOf(r: ReviewStoreItem): "SCRIPT" | "FINAL" {
+  return reviewHasVideo(r) ? "FINAL" : "SCRIPT";
+}
+
+/** 스토어 아이템에 시간이 없을 수도 있으니 여러 키를 순회해서 최대한 “그럴듯한 시각”을 뽑는다 */
+function reviewTimeOf(r: ReviewStoreItem): number {
+  const keys = ["reviewedAt", "updatedAt", "submittedAt", "createdAt"] as const;
+  for (const k of keys) {
+    const t = readNum(r, k);
+    if (typeof t === "number" && t > 0) return t;
+  }
+  return Date.now();
+}
+
+function reviewCommentOf(r: ReviewStoreItem): string | undefined {
+  const keys = ["comment", "reviewerComment", "rejectedComment", "rejectReason", "note"] as const;
+  for (const k of keys) {
+    const s = readStr(r, k);
+    if (s && s.trim().length > 0) return s;
+  }
+  return undefined;
+}
+
+function pickLatest(reviews: ReviewStoreItem[]): ReviewStoreItem | null {
+  if (!reviews || reviews.length === 0) return null;
+  let best = reviews[0];
+  let bestT = reviewTimeOf(best);
+  for (let i = 1; i < reviews.length; i++) {
+    const t = reviewTimeOf(reviews[i]);
+    if (t >= bestT) {
+      best = reviews[i];
+      bestT = t;
+    }
+  }
+  return best ?? null;
+}
+
+/**
+ * reviewFlowStore 상태를 CreatorWorkItem에 반영한다.
+ * - 1차 승인(스크립트) => scriptApprovedAt 세팅 + status=DRAFT 복귀
+ * - 2차 승인(최종)     => status=APPROVED
+ * - 반려/대기          => status/코멘트/단계 필드 반영
+ */
+function applyReviewStoreSync(prev: CreatorWorkItem[], reviews: ReviewStoreItem[]): CreatorWorkItem[] {
+  if (!prev || prev.length === 0) return prev;
+
+  // contentId 기준으로 그룹화
+  const map = new Map<string, { script: ReviewStoreItem[]; final: ReviewStoreItem[] }>();
+  for (const r of reviews) {
+    const contentId = (r as { contentId?: string }).contentId;
+    if (!contentId) continue;
+
+    const bucket = map.get(contentId) ?? { script: [], final: [] };
+    if (reviewStageOf(r) === "FINAL") bucket.final.push(r);
+    else bucket.script.push(r);
+    map.set(contentId, bucket);
+  }
+
+  let changedAny = false;
+
+  const next = prev.map((it) => {
+    const bucket = map.get(it.id);
+    if (!bucket) return it;
+
+    const latestFinal = pickLatest(bucket.final);
+    const latestScript = pickLatest(bucket.script);
+
+    let nextStatus = it.status;
+    let nextScriptApprovedAt = it.scriptApprovedAt;
+    let nextReviewStage = it.reviewStage;
+    let nextRejectedStage = it.rejectedStage;
+    let nextRejectedComment = it.rejectedComment;
+
+    // 우선순위: FINAL(2차) 결과가 있으면 FINAL이 최종 상태를 결정
+    if (latestFinal) {
+      const st = (latestFinal as { status?: CreatorWorkItem["status"] }).status;
+
+      if (st === "APPROVED") {
+        nextStatus = "APPROVED";
+        nextReviewStage = undefined;
+        nextRejectedStage = undefined;
+        nextRejectedComment = undefined;
+
+        // FINAL 승인만 있고 scriptApprovedAt이 비어있으면(이상 케이스) 시간 보정
+        if (!nextScriptApprovedAt) nextScriptApprovedAt = reviewTimeOf(latestFinal);
+      } else if (st === "REJECTED") {
+        nextStatus = "REJECTED";
+        nextReviewStage = undefined;
+        nextRejectedStage = "FINAL";
+        nextRejectedComment =
+          reviewCommentOf(latestFinal) ?? "최종(2차) 검토에서 반려되었습니다.";
+      } else if (st === "REVIEW_PENDING") {
+        nextStatus = "REVIEW_PENDING";
+        nextReviewStage = "FINAL";
+        nextRejectedStage = undefined;
+        nextRejectedComment = undefined;
+      }
+    } else if (latestScript) {
+      const st = (latestScript as { status?: CreatorWorkItem["status"] }).status;
+
+      if (st === "APPROVED") {
+        // 핵심: 1차 승인 → 영상 제작 가능 상태로 전환
+        nextScriptApprovedAt = nextScriptApprovedAt ?? reviewTimeOf(latestScript);
+        nextStatus = "DRAFT"; // REVIEW_PENDING에서 복귀
+        nextReviewStage = undefined;
+        nextRejectedStage = undefined;
+        nextRejectedComment = undefined;
+      } else if (st === "REJECTED") {
+        nextStatus = "REJECTED";
+        nextReviewStage = undefined;
+        nextRejectedStage = "SCRIPT";
+        nextRejectedComment =
+          reviewCommentOf(latestScript) ?? "1차(스크립트) 검토에서 반려되었습니다.";
+        // 1차 반려면 scriptApprovedAt은 의미가 없으니 제거
+        nextScriptApprovedAt = undefined;
+      } else if (st === "REVIEW_PENDING") {
+        nextStatus = "REVIEW_PENDING";
+        nextReviewStage = "SCRIPT";
+        nextRejectedStage = undefined;
+        nextRejectedComment = undefined;
+      }
+    }
+
+    const changed =
+      nextStatus !== it.status ||
+      nextScriptApprovedAt !== it.scriptApprovedAt ||
+      nextReviewStage !== it.reviewStage ||
+      nextRejectedStage !== it.rejectedStage ||
+      nextRejectedComment !== it.rejectedComment;
+
+    if (!changed) return it;
+
+    changedAny = true;
+
+    // updatedAt은 리뷰 이벤트 시각으로 끌어올려 정렬/표시에 반영
+    const t = latestFinal
+      ? reviewTimeOf(latestFinal)
+      : latestScript
+        ? reviewTimeOf(latestScript)
+        : Date.now();
+
+    return {
+      ...it,
+      status: nextStatus,
+      scriptApprovedAt: nextScriptApprovedAt,
+      reviewStage: nextReviewStage,
+      rejectedStage: nextRejectedStage,
+      rejectedComment: nextRejectedComment,
+      updatedAt: Math.max(it.updatedAt, t),
+    };
+  });
+
+  return changedAny ? next : prev;
+}
+
+export function useCreatorStudioController(options?: UseCreatorStudioControllerOptions) {
   const creatorName = options?.creatorName ?? "VIDEO_CREATOR";
   const allowedDeptIds = options?.allowedDeptIds ?? null;
 
   const creatorType: CreatorType =
     options?.creatorType ??
-    (allowedDeptIds && allowedDeptIds.length > 0
-      ? "DEPT_CREATOR"
-      : "GLOBAL_CREATOR");
+    (allowedDeptIds && allowedDeptIds.length > 0 ? "DEPT_CREATOR" : "GLOBAL_CREATOR");
 
   const isDeptCreator = creatorType === "DEPT_CREATOR";
 
-  const [items, setItems] = useState<CreatorWorkItem[]>(() =>
-    createMockCreatorWorkItems()
-  );
+  const [items, setItems] = useState<CreatorWorkItem[]>(() => createMockCreatorWorkItems());
   const [tab, setTab] = useState<CreatorTabId>("draft");
   const [query, setQuery] = useState("");
   const [sortMode, setSortMode] = useState<CreatorSortMode>("updated_desc");
@@ -404,6 +633,9 @@ export function useCreatorStudioController(
 
   // 파이프라인 타이머(전체에서 1개만) - mock
   const timerRef = useRef<number | null>(null);
+
+  // updateSelectedScript 토스트 스팸 방지(throttle)
+  const scriptToastRef = useRef<{ id: string | null; ts: number }>({ id: null, ts: 0 });
 
   const clearToastSoon = (ms = 2200) => {
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
@@ -518,15 +750,10 @@ export function useCreatorStudioController(
   /**
    * 버전 히스토리 엔트리 타입 추론(any 금지 대응)
    */
-  type VersionEntry = CreatorWorkItem["versionHistory"] extends Array<infer E>
-    ? E
-    : never;
+  type VersionEntry = CreatorWorkItem["versionHistory"] extends Array<infer E> ? E : never;
 
   const makeVersionEntry = (item: CreatorWorkItem, reason: string): VersionEntry => {
     const now = Date.now();
-
-    // 타입은 프로젝트에서 정의한 VersionEntry에 맞춰져 있을 가능성이 높고,
-    // mock 단계에서는 “최소한의 정보”를 안전하게 담아두고 UI에서 표시한다.
     const entry = {
       version: item.version ?? 1,
       status: item.status,
@@ -566,7 +793,7 @@ export function useCreatorStudioController(
       rejectedComment: undefined,
       failedReason: undefined,
       pipeline: resetPipeline(),
-      assets: clearVideoAssetsOnly(item), // 스크립트/파일은 유지, 영상만 비움
+      assets: clearVideoAssetsOnly(item),
     };
 
     // 단일 축 강제 정규화(안전)
@@ -595,7 +822,7 @@ export function useCreatorStudioController(
     if (allowedItems.length === 0) return null;
 
     const sorted = sortItems(allowedItems, "updated_desc");
-    const byTab = sorted.filter((it) => tabMatchesStatus(tab, it.status));
+    const byTab = sorted.filter((it) => tabMatchesStatus(tab, it));
     const fallback = (byTab[0] ?? sorted[0] ?? null)?.id ?? null;
 
     if (!rawSelectedId) return fallback;
@@ -604,7 +831,7 @@ export function useCreatorStudioController(
     if (!exists) return fallback;
 
     const cur = allowedItems.find((it) => it.id === rawSelectedId) ?? null;
-    if (cur && !tabMatchesStatus(tab, cur.status)) {
+    if (cur && !tabMatchesStatus(tab, cur)) {
       return (byTab[0] ?? null)?.id ?? null;
     }
 
@@ -626,7 +853,6 @@ export function useCreatorStudioController(
         const nextCategoryId = it.categoryId;
         const mandatoryCategory = isMandatoryByCategory(nextCategoryId);
 
-        // P0: DEPT_CREATOR는 4대 아이템을 원칙상 다루지 않음 → 보이더라도 전사타겟이면 isVisible에서 숨김
         const nextCategoryLabel = categoryLabel(nextCategoryId);
         const nextTemplateId = ensureTemplateId(it.templateId ?? "");
         const nextJobTrainingId = normalizeJobTrainingIdByCategory(
@@ -635,10 +861,8 @@ export function useCreatorStudioController(
           ensureJobTrainingId
         );
 
-        // 단일 축: 4대면 isMandatory=true + targetDeptIds=[]
         let nextIsMandatory = mandatoryCategory ? true : it.isMandatory;
 
-        // P0: DEPT_CREATOR는 isMandatory 금지
         if (isDeptCreator && nextIsMandatory) nextIsMandatory = false;
 
         const nextTargetDeptIds = normalizeTargetDeptIds(
@@ -647,9 +871,7 @@ export function useCreatorStudioController(
           nextCategoryId
         );
 
-        const nextVersion =
-          typeof it.version === "number" && it.version >= 1 ? it.version : 1;
-
+        const nextVersion = typeof it.version === "number" && it.version >= 1 ? it.version : 1;
         const nextHistory = Array.isArray(it.versionHistory) ? it.versionHistory : [];
 
         const changed =
@@ -682,7 +904,7 @@ export function useCreatorStudioController(
     const q = normalizeQuery(query);
     const qTokens = q ? q.split(/\s+/).filter(Boolean) : [];
 
-    const baseAll = items.filter((it) => tabMatchesStatus(tab, it.status));
+    const baseAll = items.filter((it) => tabMatchesStatus(tab, it));
     const base = isDeptCreator
       ? baseAll.filter((it) => isVisibleToDeptCreator(it, allowedDeptIds))
       : baseAll;
@@ -691,36 +913,40 @@ export function useCreatorStudioController(
       qTokens.length === 0
         ? base
         : base.filter((it) => {
-            const deptText =
-              it.targetDeptIds.length === 0
-                ? "전사 전체 all company"
-                : it.targetDeptIds.map(deptLabel).join(" ");
+          const deptText =
+            it.targetDeptIds.length === 0
+              ? "전사 전체 all company"
+              : it.targetDeptIds.map(deptLabel).join(" ");
 
-            const hay = [
-              it.title,
-              it.categoryLabel,
-              categoryKindText(it.categoryId),
-              labelStatus(it.status),
-              `v${String(it.version ?? 1)}`,
-              deptText,
-              it.assets.sourceFileName ?? "",
-              formatDateTime(it.updatedAt),
-              templateLabel(it.templateId),
-              it.jobTrainingId ? jobTrainingLabel(it.jobTrainingId) : "",
-              it.isMandatory ? "필수 mandatory" : "선택 optional",
-            ]
-              .join(" ")
-              .toLowerCase();
+          const hay = [
+            it.title,
+            it.categoryLabel,
+            categoryKindText(it.categoryId),
+            labelStatus(it.status),
+            `v${String(it.version ?? 1)}`,
+            deptText,
+            it.assets.sourceFileName ?? "",
+            formatDateTime(it.updatedAt),
+            templateLabel(it.templateId),
+            it.jobTrainingId ? jobTrainingLabel(it.jobTrainingId) : "",
+            it.isMandatory ? "필수 mandatory" : "선택 optional",
+          ]
+            .join(" ")
+            .toLowerCase();
 
-            return includesAny(hay, qTokens);
-          });
+          return includesAny(hay, qTokens);
+        });
 
     return sortItems(searched, sortMode);
   }, [items, query, sortMode, tab, isDeptCreator, allowedDeptIds]);
 
   const selectedValidation = useMemo(() => {
     if (!selectedItem) return { ok: false, issues: ["선택된 콘텐츠가 없습니다."] };
-    return validateForReview(selectedItem, scopeCtx);
+
+    const approvedAt = getScriptApprovedAt(selectedItem);
+    const mode: "SCRIPT" | "FINAL" = approvedAt != null ? "FINAL" : "SCRIPT";
+
+    return validateForReview(selectedItem, scopeCtx, mode);
   }, [selectedItem, scopeCtx]);
 
   const selectItem = (id: string) => setRawSelectedId(id);
@@ -728,7 +954,6 @@ export function useCreatorStudioController(
   const createDraft = () => {
     const now = Date.now();
 
-    // P0: DEPT_CREATOR는 categories가 이미 직무만 남아있음
     const defaultCategoryId = categories[0]?.id ?? "C001";
     const defaultCategoryLabel = categories[0]?.name ?? categoryLabel(defaultCategoryId);
 
@@ -736,12 +961,10 @@ export function useCreatorStudioController(
 
     const mandatoryCategory = isMandatoryByCategory(defaultCategoryId);
 
-    // 직무일 때만 Training ID 초기화
     const defaultJobTrainingId = isJobCategory(defaultCategoryId)
       ? ensureJobTrainingId(jobTrainings[0]?.id ?? "")
       : undefined;
 
-    // 기본 타겟: 부서 1개(UX 안정) / 단, 4대면 전사 고정
     const defaultTargetDeptIds = mandatoryCategory
       ? []
       : departments[0]?.id
@@ -758,7 +981,6 @@ export function useCreatorStudioController(
       templateId: defaultTemplateId,
       jobTrainingId: defaultJobTrainingId,
 
-      // 단일 축 강제(4대면 전사 고정)
       isMandatory: mandatoryCategory ? true : false,
 
       targetDeptIds: normalizeTargetDeptIds(
@@ -795,9 +1017,7 @@ export function useCreatorStudioController(
   const updateSelected = (patch: Partial<CreatorWorkItem>) => {
     if (!selectedId) return;
     setItems((prev) =>
-      prev.map((it) =>
-        it.id === selectedId ? { ...it, ...patch, updatedAt: Date.now() } : it
-      )
+      prev.map((it) => (it.id === selectedId ? { ...it, ...patch, updatedAt: Date.now() } : it))
     );
   };
 
@@ -817,15 +1037,19 @@ export function useCreatorStudioController(
   ) => {
     if (!selectedItem) return;
 
+    const approvedAt = getScriptApprovedAt(selectedItem);
+    if (approvedAt != null) {
+      showToast("info", "1차(스크립트) 승인 이후에는 기본 정보를 수정할 수 없습니다.");
+      return;
+    }
+
     if (isLockedForEdit(selectedItem)) {
       showToast("info", "검토 대기/승인/반려/생성 중 상태에서는 편집할 수 없습니다.");
       return;
     }
 
-    // 1) title
     const nextTitle = patch.title ?? selectedItem.title;
 
-    // 2) category 정규화 + P0: DEPT_CREATOR는 4대 선택 불가
     const desiredCategoryId = patch.categoryId ?? selectedItem.categoryId;
     const desiredMandatoryCategory = isMandatoryByCategory(desiredCategoryId);
 
@@ -837,21 +1061,14 @@ export function useCreatorStudioController(
     const nextCategoryId = desiredCategoryId;
     const nextCategoryLabel = categoryLabel(nextCategoryId);
 
-    // 3) template 정규화
-    const nextTemplateId = ensureTemplateId(
-      patch.templateId ?? selectedItem.templateId ?? ""
-    );
+    const nextTemplateId = ensureTemplateId(patch.templateId ?? selectedItem.templateId ?? "");
 
-    // 4) jobTraining 정규화
     const nextJobTrainingId = normalizeJobTrainingIdByCategory(
       nextCategoryId,
       patch.jobTrainingId ?? selectedItem.jobTrainingId ?? null,
       ensureJobTrainingId
     );
 
-    // 5) isMandatory 정규화
-    // - 단일 축: 4대면 무조건 true
-    // - DEPT_CREATOR는 true 금지
     let nextIsMandatory = patch.isMandatory ?? selectedItem.isMandatory;
 
     if (desiredMandatoryCategory) nextIsMandatory = true;
@@ -860,14 +1077,12 @@ export function useCreatorStudioController(
       showToast("info", "부서 제작자는 필수 교육으로 지정할 수 없습니다.");
     }
 
-    // 6) 대상 부서 정규화
     const nextTargetDeptIds = normalizeTargetDeptIds(
       patch.targetDeptIds ?? selectedItem.targetDeptIds,
       nextIsMandatory,
       nextCategoryId
     );
 
-    // 7) 생성 결과 무효화 조건(기본 정보 변경)
     const prevJobTrainingId = selectedItem.jobTrainingId ?? "";
     const nextJobTrainingCompare = nextJobTrainingId ?? "";
 
@@ -875,8 +1090,7 @@ export function useCreatorStudioController(
       nextTitle !== selectedItem.title ||
       nextCategoryId !== selectedItem.categoryId ||
       nextTemplateId !== (selectedItem.templateId ?? "") ||
-      (isJobCategory(nextCategoryId) &&
-        nextJobTrainingCompare !== prevJobTrainingId) ||
+      (isJobCategory(nextCategoryId) && nextJobTrainingCompare !== prevJobTrainingId) ||
       nextIsMandatory !== selectedItem.isMandatory ||
       nextTargetDeptIds.join("|") !== selectedItem.targetDeptIds.join("|");
 
@@ -896,10 +1110,7 @@ export function useCreatorStudioController(
       normalizedPatch.failedReason = undefined;
 
       updateSelected(normalizedPatch);
-      showToast(
-        "info",
-        "기본 정보가 변경되어 생성 결과가 초기화되었습니다. 자동 생성을 다시 실행해 주세요."
-      );
+      showToast("info", "기본 정보가 변경되어 생성 결과가 초기화되었습니다. 자동 생성을 다시 실행해 주세요.");
       return;
     }
 
@@ -911,6 +1122,12 @@ export function useCreatorStudioController(
    */
   const attachFileToSelected = (file: File) => {
     if (!selectedItem) return;
+
+    const approvedAt = getScriptApprovedAt(selectedItem);
+    if (approvedAt != null) {
+      showToast("info", "1차(스크립트) 승인 이후에는 자료 파일을 변경할 수 없습니다.");
+      return;
+    }
 
     if (isLockedForEdit(selectedItem)) {
       showToast("info", "검토 대기/승인/반려/생성 중 상태에서는 파일을 변경할 수 없습니다.");
@@ -924,7 +1141,6 @@ export function useCreatorStudioController(
     }
 
     if (v.warnings.length > 0) {
-      // 경고는 info로 짧게 1회만 보여주기
       showToast("info", v.warnings[0]);
     }
 
@@ -943,11 +1159,20 @@ export function useCreatorStudioController(
   };
 
   /**
-   * FULL pipeline: 업로드 → 스크립트 → 영상 → 썸네일
+   * SCRIPT-ONLY pipeline: 업로드 → 스크립트
    * - P0: 동시에 하나만 실행(전체 items 기준)
    */
   const runPipelineForSelected = () => {
     if (!selectedItem) return;
+
+    const approvedAt = getScriptApprovedAt(selectedItem);
+    if (approvedAt != null) {
+      showToast(
+        "info",
+        "1차 승인 이후에는 스크립트 생성/재생성을 실행할 수 없습니다. 영상 생성(2차 준비)을 진행해 주세요."
+      );
+      return;
+    }
 
     const anyRunning = items.some((it) => it.pipeline.state === "RUNNING");
     if (anyRunning) {
@@ -958,7 +1183,6 @@ export function useCreatorStudioController(
     const targetId = selectedItem.id;
     const mandatoryCategory = isMandatoryByCategory(selectedItem.categoryId);
 
-    // 생성 전 필수 메타 검증
     if (!selectedItem.templateId) {
       showToast("error", "영상 템플릿을 먼저 선택해 주세요.", 3000);
       return;
@@ -968,7 +1192,6 @@ export function useCreatorStudioController(
       return;
     }
 
-    // 단일 축: 4대면 전사 고정 + isMandatory=true 강제
     if (mandatoryCategory) {
       if (!selectedItem.isMandatory) {
         showToast("error", "4대 의무교육은 필수 교육으로만 생성할 수 있습니다.", 3000);
@@ -980,13 +1203,11 @@ export function useCreatorStudioController(
       }
     }
 
-    // isMandatory=true면 전사 대상 강제
     if (selectedItem.isMandatory && selectedItem.targetDeptIds.length > 0) {
       showToast("error", "필수 교육은 전사 대상으로만 지정할 수 있습니다.", 3000);
       return;
     }
 
-    // DEPT_CREATOR 제약: 전사 대상 금지(최소 1개)
     if (isDeptCreator && selectedItem.targetDeptIds.length === 0) {
       showToast("error", "부서 제작자는 대상 부서를 최소 1개 이상 선택해 주세요.", 3000);
       return;
@@ -1031,6 +1252,7 @@ export function useCreatorStudioController(
     updateSelected({
       status: "GENERATING",
       pipeline: {
+        mode: PIPELINE_MODE_SCRIPT_ONLY,
         state: "RUNNING",
         stage: "UPLOAD",
         progress: 0,
@@ -1052,18 +1274,13 @@ export function useCreatorStudioController(
           const inc = 4 + Math.floor(Math.random() * 7); // 4~10
           const np = clamp(p + inc, 0, 100);
 
-          if (np < 20) {
+          // SCRIPT_ONLY: VIDEO/THUMBNAIL 단계로 넘어가지 않게 정리
+          if (np < 28) {
             stage = "UPLOAD";
             message = "업로드 처리 중…";
-          } else if (np < 60) {
+          } else if (np < 100) {
             stage = "SCRIPT";
             message = "스크립트 생성 중…";
-          } else if (np < 92) {
-            stage = "VIDEO";
-            message = "영상 합성 중…";
-          } else if (np < 100) {
-            stage = "THUMBNAIL";
-            message = "썸네일 생성 중…";
           } else {
             stage = "DONE";
             message = "생성 완료";
@@ -1078,6 +1295,7 @@ export function useCreatorStudioController(
               status: "DRAFT",
               updatedAt: finishedAt,
               pipeline: {
+                mode: PIPELINE_MODE_SCRIPT_ONLY,
                 state: "SUCCESS",
                 stage: "DONE",
                 progress: 100,
@@ -1088,8 +1306,8 @@ export function useCreatorStudioController(
               assets: {
                 ...it.assets,
                 script,
-                videoUrl: mockVideoUrl(it.id),
-                thumbnailUrl: `mock://thumbnail/${it.id}`,
+                videoUrl: "",
+                thumbnailUrl: "",
               },
               failedReason: undefined,
             };
@@ -1117,6 +1335,22 @@ export function useCreatorStudioController(
    */
   const runVideoOnlyForSelected = () => {
     if (!selectedItem) return;
+
+    // unused-vars 해결 + 성능: 스냅샷 1회만
+    const reviews = listReviewItemsSnapshot();
+    const stage1Approved =
+      getScriptApprovedAt(selectedItem) != null ||
+      reviews.some(
+        (r) =>
+          r.contentId === selectedItem.id &&
+          (r.videoUrl ?? "").trim() === "" &&
+          r.status === "APPROVED"
+      );
+
+    if (!stage1Approved) {
+      showToast("error", "영상 생성은 1차(스크립트) 승인이 완료된 후에 가능합니다.", 3000);
+      return;
+    }
 
     const anyRunning = items.some((it) => it.pipeline.state === "RUNNING");
     if (anyRunning) {
@@ -1194,7 +1428,6 @@ export function useCreatorStudioController(
       return;
     }
 
-    // “영상만” 실행 조건이 아니면 안내
     if (!shouldUseVideoOnly(selectedItem)) {
       showToast("info", "현재 상태에서는 전체 자동 생성을 실행해 주세요.");
       return;
@@ -1206,6 +1439,7 @@ export function useCreatorStudioController(
     updateSelected({
       status: "GENERATING",
       pipeline: {
+        mode: PIPELINE_MODE_VIDEO_ONLY,
         state: "RUNNING",
         stage: "VIDEO",
         progress: 0,
@@ -1246,6 +1480,7 @@ export function useCreatorStudioController(
               status: "DRAFT",
               updatedAt: finishedAt,
               pipeline: {
+                mode: PIPELINE_MODE_VIDEO_ONLY,
                 state: "SUCCESS",
                 stage: "DONE",
                 progress: 100,
@@ -1295,6 +1530,20 @@ export function useCreatorStudioController(
     };
   }, []);
 
+  // === reviewFlowStore -> Creator items 동기화 (P0: 폴링) ===
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    setItems((prev) => applyReviewStoreSync(prev, listReviewItemsSnapshot()));
+
+    const id = window.setInterval(() => {
+      const snapshot = listReviewItemsSnapshot();
+      setItems((prev) => applyReviewStoreSync(prev, snapshot));
+    }, 600);
+
+    return () => window.clearInterval(id);
+  }, []);
+
   const failPipelineForSelected = (reason: string) => {
     if (!selectedItem) return;
 
@@ -1318,7 +1567,6 @@ export function useCreatorStudioController(
     if (!selectedItem) return;
     if (selectedItem.status !== "FAILED") return;
 
-    // UX: 실패 탭에서 재시도 누르면 FAILED → draft 탭으로
     setTab("draft");
 
     if (shouldUseVideoOnly(selectedItem)) {
@@ -1332,14 +1580,19 @@ export function useCreatorStudioController(
   const updateSelectedScript = (script: string) => {
     if (!selectedItem) return;
 
+    const approvedAt = getScriptApprovedAt(selectedItem);
+    if (approvedAt != null) {
+      showToast("info", "1차(스크립트) 승인 이후에는 스크립트를 수정할 수 없습니다.");
+      return;
+    }
+
     if (isLockedForEdit(selectedItem)) {
       showToast("info", "검토 대기/승인/반려/생성 중 상태에서는 스크립트를 수정할 수 없습니다.");
       return;
     }
 
-    const shouldNotify = hadGeneratedOutput(selectedItem);
-
-    // 스크립트 수정 시: 영상/썸네일만 초기화 → “영상만 재생성” 유도
+    // Stage1: 스크립트 수정은 정상 흐름이므로 “영상 재생성” 안내 금지
+    // 대신, 파이프라인 표시는 IDLE로 돌려도 1차 검토 요청이 막히지 않도록 validateForReview가 분기됨
     updateSelected({
       assets: {
         ...selectedItem.assets,
@@ -1347,31 +1600,78 @@ export function useCreatorStudioController(
         videoUrl: "",
         thumbnailUrl: "",
       },
-      pipeline: resetPipeline(),
+      pipeline: resetPipeline(PIPELINE_MODE_SCRIPT_ONLY),
       failedReason: undefined,
     });
 
-    if (shouldNotify) {
-      showToast("info", "스크립트가 수정되었습니다. '영상만 재생성'을 실행해 주세요.");
+    // 토스트 스팸 방지(throttle)
+    const now = Date.now();
+    const last = scriptToastRef.current;
+    const shouldToast = last.id !== selectedItem.id || now - last.ts > 1300;
+
+    if (shouldToast) {
+      scriptToastRef.current = { id: selectedItem.id, ts: now };
+      showToast("info", "스크립트가 수정되었습니다. 스크립트 검토 요청(1차)이 가능합니다.");
     }
   };
 
   const requestReviewForSelected = () => {
     if (!selectedItem) return;
 
-    const v = validateForReview(selectedItem, scopeCtx);
+    const hasVideo = Boolean(selectedItem.assets.videoUrl && selectedItem.assets.videoUrl.trim().length > 0);
+
+    // 2차 요청은 "1차 승인"이 필요 (scriptApprovedAt 또는 store 승인 기록)
+    const reviews = listReviewItemsSnapshot();
+    const stage1Approved =
+      getScriptApprovedAt(selectedItem) != null ||
+      reviews.some(
+        (r) =>
+          r.contentId === selectedItem.id &&
+          (r.videoUrl ?? "").trim() === "" &&
+          r.status === "APPROVED"
+      );
+
+    if (hasVideo && !stage1Approved) {
+      showToast("error", "2차(최종) 검토 요청은 1차 승인 후에만 가능합니다.", 3000);
+      return;
+    }
+
+    const v = validateForReview(selectedItem, scopeCtx, hasVideo ? "FINAL" : "SCRIPT");
     if (!v.ok) {
       showToast("error", v.issues[0] ?? "검토 요청 조건을 확인해주세요.", 3000);
       return;
     }
 
+    const dept =
+      selectedItem.isMandatory
+        ? "전사"
+        : selectedItem.targetDeptIds.length > 0
+          ? selectedItem.targetDeptIds.map(deptLabel).join(", ")
+          : "전사";
+
+    submitCreatorReviewRequest({
+      contentId: selectedItem.id,
+      title: selectedItem.title,
+      department: dept,
+      creatorName: selectedItem.createdByName ?? "VIDEO_CREATOR",
+      contentCategory: isMandatoryByCategory(selectedItem.categoryId) ? "MANDATORY" : "JOB",
+      scriptText: selectedItem.assets.script ?? "",
+      videoUrl: hasVideo ? selectedItem.assets.videoUrl : undefined,
+    });
+
     updateSelected({ status: "REVIEW_PENDING" });
     setTab("review_pending");
-    showToast("success", "검토 요청이 제출되었습니다. 검토자 Work Queue에 반영됩니다.");
+
+    showToast(
+      "success",
+      hasVideo
+        ? "2차(최종) 검토 요청이 제출되었습니다. (스크립트+영상)"
+        : "1차 검토 요청이 제출되었습니다. (스크립트만)"
+    );
   };
 
   /**
-   * P0: 반려는 읽기 전용 → “새 버전으로 편집”으로만 재작업
+   * 반려는 읽기 전용 → “새 버전으로 편집”으로만 재작업
    */
   const reopenRejectedToDraft = () => {
     if (!selectedItem) return;
@@ -1379,9 +1679,7 @@ export function useCreatorStudioController(
 
     const next = bumpVersionForRework(selectedItem, "REJECTED → 새 버전 재작업");
 
-    setItems((prev) =>
-      prev.map((it) => (it.id === selectedItem.id ? next : it))
-    );
+    setItems((prev) => prev.map((it) => (it.id === selectedItem.id ? next : it)));
     setTab("draft");
     showToast("info", `새 버전(v${next.version})으로 편집을 시작합니다. 필요 시 '영상만 재생성'을 실행하세요.`);
   };
@@ -1403,7 +1701,7 @@ export function useCreatorStudioController(
       : remaining;
 
     const sorted = sortItems(allowedRemaining, "updated_desc");
-    const byTab = sorted.filter((it) => tabMatchesStatus(tab, it.status));
+    const byTab = sorted.filter((it) => tabMatchesStatus(tab, it));
     const nextId = (byTab[0] ?? sorted[0] ?? null)?.id ?? null;
 
     setItems(remaining);

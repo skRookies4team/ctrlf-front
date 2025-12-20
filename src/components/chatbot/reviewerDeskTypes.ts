@@ -2,6 +2,8 @@
 
 export type ReviewStatus = "REVIEW_PENDING" | "APPROVED" | "REJECTED";
 
+export type ReviewStage = "SCRIPT" | "FINAL";
+
 export type ContentCategory = "MANDATORY" | "JOB" | "POLICY" | "OTHER";
 
 export type ContentType = "VIDEO" | "POLICY_DOC";
@@ -85,4 +87,6 @@ export interface ReviewWorkItem {
   lock?: WorkItemLock;
   tags?: string[];
   riskScore?: number; // 0~100 가정(모의)
+
+  reviewStage?: ReviewStage; // VIDEO 타입에서만 의미 있음
 }

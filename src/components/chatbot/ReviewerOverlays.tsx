@@ -17,8 +17,11 @@ function getFocusable(container: HTMLElement) {
     "select:not([disabled])",
     "[tabindex]:not([tabindex='-1'])",
   ];
-  return Array.from(container.querySelectorAll<HTMLElement>(selectors.join(","))).filter(
-    (el) => !el.hasAttribute("disabled") && el.getAttribute("aria-hidden") !== "true"
+  return Array.from(
+    container.querySelectorAll<HTMLElement>(selectors.join(","))
+  ).filter(
+    (el) =>
+      !el.hasAttribute("disabled") && el.getAttribute("aria-hidden") !== "true"
   );
 }
 
@@ -49,6 +52,11 @@ const RejectModalBody: React.FC<{
 }) => {
   const [reason, setReason] = useState(initialReason);
 
+  // decisionModal.reason이 바뀌는 케이스(다른 항목으로 전환)에서 초기값 동기화
+  useEffect(() => {
+    setReason(initialReason);
+  }, [initialReason]);
+
   const trimmed = reason.trim();
   const showError = !!error && trimmed.length === 0;
 
@@ -68,7 +76,9 @@ const RejectModalBody: React.FC<{
           showError && "cb-reviewer-textarea--error"
         )}
         value={reason}
-        onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setReason(e.target.value)}
+        onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
+          setReason(e.target.value)
+        }
         placeholder="예) 개인정보 마스킹이 필요합니다. 전화번호/사번이 노출됩니다."
         disabled={isBusy}
       />
@@ -106,6 +116,9 @@ const ReviewerOverlays: React.FC<{
   approveProcessing: boolean;
   rejectProcessing: boolean;
 
+  approveLabel?: string;
+  approveProcessingLabel?: string;
+
   decisionModal: DecisionModalState;
   onCloseDecision: () => void;
   onApprove: () => void;
@@ -119,6 +132,8 @@ const ReviewerOverlays: React.FC<{
   canApprove,
   approveProcessing,
   rejectProcessing,
+  approveLabel,
+  approveProcessingLabel,
   decisionModal,
   onCloseDecision,
   onApprove,
@@ -128,6 +143,11 @@ const ReviewerOverlays: React.FC<{
   previewItem,
 }) => {
   const uid = React.useId();
+
+  const approveLabelText = (approveLabel ?? "승인").trim() || "승인";
+  const approveBtnText = approveProcessing
+    ? approveProcessingLabel ?? `${approveLabelText} 처리 중…`
+    : `${approveLabelText}하기`;
 
   const approveTitleId = `cb-reviewer-approve-title-${uid}`;
   const approveDescId = `cb-reviewer-approve-desc-${uid}`;
@@ -153,7 +173,6 @@ const ReviewerOverlays: React.FC<{
   // ===== focus init / restore (Decision) =====
   useEffect(() => {
     if (!decisionModal.open) {
-      // close 시점: focus restore
       window.setTimeout(() => lastDecisionFocusRef.current?.focus?.(), 0);
       return;
     }
@@ -199,23 +218,25 @@ const ReviewerOverlays: React.FC<{
   /**
    * ===== 글로벌 keydown 리스너는 “1개만” =====
    * - 우선순위: Decision > Preview
-   * - Escape: busy면 무시
-   * - Tab: 최상위 오버레이 root에서만 focus trap
+   * - Escape: busy면 닫기 무시
+   * - Tab: focus trap은 busy여도 유지(포커스 이탈 방지)
+   * - Enter: 승인 모달에서 Enter → 승인 (단, canApprove && !busy)
    */
   useEffect(() => {
     if (!isAnyOpen) return;
 
     const onKeyDown = (e: KeyboardEvent) => {
-      // 처리 중에는 닫기/포커스 이동을 제한(실무 안전)
-      if (isBusy) return;
-
       const decisionOpen = decisionModal.open;
       const previewIsOpen = previewOpen;
 
-      const activeRoot =
-        decisionOpen ? decisionRootRef.current : previewIsOpen ? previewRootRef.current : null;
+      const activeRoot = decisionOpen
+        ? decisionRootRef.current
+        : previewIsOpen
+          ? previewRootRef.current
+          : null;
 
       if (e.key === "Escape") {
+        if (isBusy) return;
         e.preventDefault();
         if (decisionOpen) onCloseDecisionEv();
         else if (previewIsOpen) onClosePreviewEv();
@@ -223,10 +244,12 @@ const ReviewerOverlays: React.FC<{
       }
 
       if (e.key === "Enter") {
-        // 승인 모달에서 Enter → 승인 (UX 향상: 기본 버튼 트리거)
-        // 반려 모달은 textarea Enter를 막지 않음(줄바꿈 필요)
-        if (decisionOpen && decisionModal.kind === "approve") {
-          // 버튼 포커스가 아닌 상황에서도 동작해야 하므로 여기서 처리
+        if (
+          decisionOpen &&
+          decisionModal.kind === "approve" &&
+          !isBusy &&
+          canApprove
+        ) {
           e.preventDefault();
           onApproveEv();
         }
@@ -261,6 +284,7 @@ const ReviewerOverlays: React.FC<{
   }, [
     isAnyOpen,
     isBusy,
+    canApprove,
     decisionModal.open,
     decisionModal.kind,
     previewOpen,
@@ -287,13 +311,17 @@ const ReviewerOverlays: React.FC<{
             role="dialog"
             aria-modal="true"
             aria-busy={isBusy}
-            aria-labelledby={decisionModal.kind === "approve" ? approveTitleId : rejectTitleId}
-            aria-describedby={decisionModal.kind === "approve" ? approveDescId : rejectDescId}
+            aria-labelledby={
+              decisionModal.kind === "approve" ? approveTitleId : rejectTitleId
+            }
+            aria-describedby={
+              decisionModal.kind === "approve" ? approveDescId : rejectDescId
+            }
           >
             {decisionModal.kind === "approve" ? (
               <>
                 <div id={approveTitleId} className="cb-reviewer-modal-title">
-                  승인 확인
+                  {approveLabelText} 확인
                 </div>
                 <div id={approveDescId} className="cb-reviewer-modal-desc">
                   {decisionModal.message}
@@ -310,10 +338,14 @@ const ReviewerOverlays: React.FC<{
                   <button
                     type="button"
                     className="cb-reviewer-primary-btn"
-                    onClick={onApproveEv}
+                    onClick={() => {
+                      if (!canApprove || isBusy) return;
+                      onApproveEv();
+                    }}
                     disabled={!canApprove || isBusy}
+                    title={!canApprove ? "승인 권한/조건을 확인하세요." : undefined}
                   >
-                    {approveProcessing ? "승인 처리 중…" : "승인하기"}
+                    {approveBtnText}
                   </button>
                 </div>
               </>
@@ -359,7 +391,10 @@ const ReviewerOverlays: React.FC<{
               <button
                 type="button"
                 className="cb-reviewer-close-btn"
-                onClick={onClosePreviewEv}
+                onClick={() => {
+                  if (isBusy) return;
+                  onClosePreviewEv();
+                }}
                 aria-label="close preview"
                 disabled={isBusy}
                 title={isBusy ? "처리 중에는 닫을 수 없습니다." : undefined}
@@ -371,11 +406,17 @@ const ReviewerOverlays: React.FC<{
             <div className="cb-reviewer-preview-body">
               {previewItem.contentType === "VIDEO" ? (
                 <div className="cb-reviewer-preview-media">
-                  <video className="cb-reviewer-preview-video" src={previewItem.videoUrl} controls />
+                  <video
+                    className="cb-reviewer-preview-video"
+                    src={previewItem.videoUrl}
+                    controls
+                  />
                 </div>
               ) : (
                 <div className="cb-reviewer-preview-doc">
-                  <div className="cb-reviewer-doc-preview-title">{previewItem.title}</div>
+                  <div className="cb-reviewer-doc-preview-title">
+                    {previewItem.title}
+                  </div>
                   <div className="cb-reviewer-doc-preview-body">
                     {previewItem.policyExcerpt ?? "(미리보기 텍스트가 없습니다)"}
                   </div>
@@ -385,7 +426,8 @@ const ReviewerOverlays: React.FC<{
 
             <div className="cb-reviewer-preview-foot">
               <span id={previewDescId} className="cb-reviewer-muted">
-                {previewItem.department} · 제작자 {previewItem.creatorName} · 버전 {previewItem.version}
+                {previewItem.department} · 제작자 {previewItem.creatorName} · 버전{" "}
+                {previewItem.version}
               </span>
             </div>
           </div>

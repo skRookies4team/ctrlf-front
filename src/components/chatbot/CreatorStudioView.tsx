@@ -1,6 +1,6 @@
 // src/components/chatbot/CreatorStudioView.tsx
 
-import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   computePanelPosition,
   type Anchor,
@@ -21,6 +21,7 @@ import type {
   CreatorSortMode,
   CreatorTabId,
   CreatorWorkItem,
+  ReviewStage,
 } from "./creatorStudioTypes";
 import CreatorTrainingSelect from "./CreatorTrainingSelect";
 
@@ -185,6 +186,567 @@ function formatBytes(bytes?: number) {
   return `${mb.toFixed(1)}MB`;
 }
 
+/**
+ * 단계/승인 필드가 타입에 없을 수도 있어서 안전 접근 유틸
+ * (any 금지 유지)
+ */
+function readOptionalNumber(obj: unknown, key: string): number | null {
+  if (!obj || typeof obj !== "object") return null;
+
+  const v = (obj as Record<string, unknown>)[key];
+
+  // 이미 number(타임스탬프)면 그대로
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+
+  // string이면: (1) 숫자 문자열 → number, (2) ISO/date 문자열 → Date.parse(ms)
+  if (typeof v === "string") {
+    const s = v.trim();
+    if (!s) return null;
+
+    const n = Number(s);
+    if (Number.isFinite(n)) return n;
+
+    const t = Date.parse(s);
+    if (Number.isFinite(t)) return t;
+  }
+
+  return null;
+}
+
+/* =========================
+   Policy helpers (NEW)
+   - 탭 매칭/1차-2차 분류를 "파생 상태"로 일관되게 처리
+========================= */
+
+type CreatorStageFilter = "all" | "stage1" | "stage2";
+
+function getScriptApprovedAt(it: CreatorWorkItem): number | null {
+  return readOptionalNumber(it, "scriptApprovedAt");
+}
+
+function isScriptApproved(it: CreatorWorkItem): boolean {
+  return getScriptApprovedAt(it) != null;
+}
+
+function inferReviewStage(it: CreatorWorkItem): ReviewStage {
+  // REVIEW_PENDING/REJECTED에서 stage 힌트를 보여줄 때:
+  // 명시(stage 필드)가 있으면 우선, 없으면 scriptApprovedAt 존재로 추론
+  if (it.reviewStage) return it.reviewStage;
+  return isScriptApproved(it) ? "FINAL" : "SCRIPT";
+}
+
+function inferRejectedStage(it: CreatorWorkItem): ReviewStage {
+  if (it.rejectedStage) return it.rejectedStage;
+  // fallback: reviewStage가 남아있을 수 있음
+  if (it.reviewStage) return it.reviewStage;
+  return isScriptApproved(it) ? "FINAL" : "SCRIPT";
+}
+
+/**
+ * 탭 매칭 정책
+ * - 초안(draft): DRAFT/GENERATING 중 scriptApprovedAt 없는 것(=1차 승인 전)
+ * - 승인(approved): (1) APPPROVED(2차) + (2) DRAFT/GENERATING인데 scriptApprovedAt 있는 것(=1차 승인 완료)
+ * - 검토대기/반려/실패: status 기반 그대로
+ */
+function matchTab(tab: CreatorTabId, it: CreatorWorkItem): boolean {
+  const sa = isScriptApproved(it);
+
+  switch (tab) {
+    case "draft":
+      return (it.status === "DRAFT" || it.status === "GENERATING") && !sa;
+
+    case "approved":
+      return (
+        it.status === "APPROVED" ||
+        ((it.status === "DRAFT" || it.status === "GENERATING") && sa)
+      );
+
+    case "review_pending":
+      return it.status === "REVIEW_PENDING";
+
+    case "rejected":
+      return it.status === "REJECTED";
+
+    case "failed":
+      return it.status === "FAILED";
+
+    default:
+      return false;
+  }
+}
+
+/**
+ * 1차/2차(서브탭) 의미를 탭별로 분리
+ * - 승인 탭:
+ *   - 1차: scriptApprovedAt 있고 status!=APPROVED (영상 생성/최종요청 전 단계)
+ *   - 2차: status==APPROVED (최종 승인/게시)
+ * - 검토대기 탭:
+ *   - 1차: stage==SCRIPT
+ *   - 2차: stage==FINAL
+ * - 반려 탭:
+ *   - 1차: rejectedStage==SCRIPT
+ *   - 2차: rejectedStage==FINAL
+ */
+function getStageForTab(tab: CreatorTabId, it: CreatorWorkItem): 1 | 2 | null {
+  if (tab === "approved") {
+    if (it.status === "APPROVED") return 2;
+    if ((it.status === "DRAFT" || it.status === "GENERATING") && isScriptApproved(it)) return 1;
+    return null;
+  }
+
+  if (tab === "review_pending") {
+    const st = inferReviewStage(it);
+    return st === "FINAL" ? 2 : 1;
+  }
+
+  if (tab === "rejected") {
+    const st = inferRejectedStage(it);
+    return st === "FINAL" ? 2 : 1;
+  }
+
+  // draft/failed는 서브탭 의미가 약해서 null(서브탭 UI 자체를 숨김)
+  return null;
+}
+
+/**
+ * 상태 pill 표시(리스트/상세 공통)
+ * - 1차 승인 완료(=scriptApprovedAt 있고 DRAFT/GENERATING)는 "승인(1차)" + approved 톤
+ * - REVIEW_PENDING/REJECTED는 (1차/2차) 힌트 추가
+ */
+function getDisplayStatusPill(it: CreatorWorkItem): { label: string; className: string } {
+  const sa = isScriptApproved(it);
+
+  // 1차 승인 완료인데 status는 DRAFT로 되돌린 정책 케이스
+  if ((it.status === "DRAFT" || it.status === "GENERATING") && sa) {
+    return {
+      label: "승인(1차)",
+      className: "cb-reviewer-pill cb-reviewer-pill--approved",
+    };
+  }
+
+  if (it.status === "REVIEW_PENDING") {
+    const st = inferReviewStage(it);
+    return {
+      label: st === "FINAL" ? "검토 대기(2차)" : "검토 대기(1차)",
+      className: statusToneClass(it.status),
+    };
+  }
+
+  if (it.status === "REJECTED") {
+    const st = inferRejectedStage(it);
+    return {
+      label: st === "FINAL" ? "반려(2차)" : "반려(1차)",
+      className: statusToneClass(it.status),
+    };
+  }
+
+  return { label: labelStatus(it.status), className: statusToneClass(it.status) };
+}
+
+function normalizeText(s: string): string {
+  return s.toLowerCase().trim();
+}
+
+function filterByQuery(
+  items: CreatorWorkItem[],
+  query: string,
+  departments: Array<{ id: string; name: string }>,
+  templates: Array<{ id: string; name: string }>,
+  jobTrainings: Array<{ id: string; name: string }>
+) {
+  const q = normalizeText(query);
+  if (!q) return items;
+
+  const tokens = q.split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return items;
+
+  const deptNameById = new Map(departments.map((d) => [d.id, d.name]));
+  const templateNameById = new Map(templates.map((t) => [t.id, t.name]));
+  const trainingNameById = new Map(jobTrainings.map((t) => [t.id, t.name]));
+
+  return items.filter((it) => {
+    const pill = getDisplayStatusPill(it);
+
+    const deptText =
+      it.targetDeptIds.length === 0
+        ? "전사"
+        : it.targetDeptIds
+            .map((id) => deptNameById.get(id) ?? deptLabel(id))
+            .join(" ");
+
+    const templateText = templateNameById.get(it.templateId) ?? templateLabel(it.templateId);
+
+    const trainingText = it.jobTrainingId
+      ? trainingNameById.get(it.jobTrainingId) ?? jobTrainingLabel(it.jobTrainingId)
+      : "";
+
+    const kindText = isJobCategory(it.categoryId) ? "직무" : "4대 전사필수";
+
+    const versionText = `v${it.version ?? 1}`;
+
+    const stageHint =
+      it.status === "APPROVED"
+        ? "2차 최종 승인 게시"
+        : (it.status === "DRAFT" || it.status === "GENERATING") && isScriptApproved(it)
+          ? "1차 승인 완료 영상 생성"
+          : it.status === "REVIEW_PENDING"
+            ? inferReviewStage(it) === "FINAL"
+              ? "2차 검토"
+              : "1차 검토"
+            : it.status === "REJECTED"
+              ? inferRejectedStage(it) === "FINAL"
+                ? "2차 반려"
+                : "1차 반려"
+              : "";
+
+    const hay = normalizeText(
+      [
+        it.title,
+        it.categoryLabel,
+        kindText,
+        deptText,
+        templateText,
+        trainingText,
+        versionText,
+        pill.label,
+        stageHint,
+      ]
+        .filter(Boolean)
+        .join(" ")
+    );
+
+    return tokens.every((t) => hay.includes(t));
+  });
+}
+
+function sortItems(items: CreatorWorkItem[], mode: CreatorSortMode): CreatorWorkItem[] {
+  const arr = [...items];
+  arr.sort((a, b) => {
+    const ua = a.updatedAt ?? 0;
+    const ub = b.updatedAt ?? 0;
+    const ca = a.createdAt ?? 0;
+    const cb = b.createdAt ?? 0;
+
+    switch (mode) {
+      case "updated_desc":
+        return ub - ua;
+      case "updated_asc":
+        return ua - ub;
+      case "created_desc":
+        return cb - ca;
+      case "created_asc":
+        return ca - cb;
+      default:
+        return ub - ua;
+    }
+  });
+  return arr;
+}
+
+function getEmptyCopy(tab: CreatorTabId, stage: CreatorStageFilter, query: string): { title: string; desc: string } {
+  const hasQuery = normalizeText(query).length > 0;
+
+  // 검색이 걸려서 비는 경우는 공통 문구로 통일
+  if (hasQuery) {
+    return {
+      title: "목록이 비어있습니다",
+      desc: "현재 검색/필터 조건에 해당하는 제작 콘텐츠가 없습니다.",
+    };
+  }
+
+  if (tab === "draft") {
+    return {
+      title: "초안이 없습니다",
+      desc: "새 교육 만들기를 눌러 제작을 시작할 수 있습니다.",
+    };
+  }
+
+  if (tab === "review_pending") {
+    return {
+      title: "검토 대기 항목이 없습니다",
+      desc: "현재 검토 요청이 제출된 콘텐츠가 없습니다.",
+    };
+  }
+
+  if (tab === "rejected") {
+    return {
+      title: "반려된 항목이 없습니다",
+      desc: "현재 반려 상태의 콘텐츠가 없습니다.",
+    };
+  }
+
+  if (tab === "approved") {
+    if (stage === "stage1") {
+      return {
+        title: "1차 승인 완료 항목이 없습니다",
+        desc: "스크립트 1차 승인 완료 후 이곳에서 영상 생성 및 최종(2차) 검토 요청을 진행합니다.",
+      };
+    }
+    if (stage === "stage2") {
+      return {
+        title: "최종 승인(2차) 완료 항목이 없습니다",
+        desc: "최종 승인 완료된 콘텐츠는 교육 페이지에 게시(노출)됩니다.",
+      };
+    }
+    return {
+      title: "승인 단계 항목이 없습니다",
+      desc: "1차 승인 완료 또는 최종 승인 완료된 콘텐츠가 없습니다.",
+    };
+  }
+
+  if (tab === "failed") {
+    return {
+      title: "실패한 항목이 없습니다",
+      desc: "현재 생성 실패 상태의 콘텐츠가 없습니다.",
+    };
+  }
+
+  return {
+    title: "목록이 비어있습니다",
+    desc: "현재 조건에 해당하는 제작 콘텐츠가 없습니다.",
+  };
+}
+
+/* =========================
+   Flow Stepper (NEW)
+========================= */
+
+type CreatorFlowStepKey =
+  | "upload"
+  | "script"
+  | "review1"
+  | "video"
+  | "review2"
+  | "publish";
+
+type CreatorFlowStepState = "done" | "active" | "locked" | "error";
+
+type CreatorFlowStep = {
+  key: CreatorFlowStepKey;
+  label: string;
+  state: CreatorFlowStepState;
+  hint?: string;
+};
+
+type CreatorFlowInput = {
+  status: CreatorWorkItem["status"];
+  hasSourceFile: boolean;
+  hasScript: boolean;
+  hasVideo: boolean;
+  isScriptApproved: boolean;
+  isPipelineRunning: boolean;
+};
+
+function buildCreatorFlowSteps(input: CreatorFlowInput): {
+  steps: CreatorFlowStep[];
+  activeKey: CreatorFlowStepKey | null;
+} {
+  const {
+    status,
+    hasSourceFile,
+    hasScript,
+    hasVideo,
+    isScriptApproved,
+    isPipelineRunning,
+  } = input;
+
+  const doneUpload = hasSourceFile;
+  const doneScript = hasScript;
+  const doneReview1 = isScriptApproved;
+  const doneVideo = hasVideo;
+  const doneReview2 = status === "APPROVED";
+  const donePublish = status === "APPROVED";
+
+  const order: CreatorFlowStepKey[] = [
+    "upload",
+    "script",
+    "review1",
+    "video",
+    "review2",
+    "publish",
+  ];
+
+  const base: Array<Omit<CreatorFlowStep, "state"> & { done: boolean }> = [
+    {
+      key: "upload",
+      label: "자료 업로드",
+      done: doneUpload,
+      hint: doneUpload ? "완료" : "파일 업로드 필요",
+    },
+    {
+      key: "script",
+      label: "스크립트 생성",
+      done: doneScript,
+      hint: doneScript ? "완료" : "생성 필요",
+    },
+    {
+      key: "review1",
+      label: "1차 승인(스크립트)",
+      done: doneReview1,
+      hint: doneReview1 ? "승인 완료" : "검토 요청/승인 필요",
+    },
+    {
+      key: "video",
+      label: "영상 생성",
+      done: doneVideo,
+      hint: doneVideo ? "완료" : "생성 필요",
+    },
+    {
+      key: "review2",
+      label: "2차 승인(최종)",
+      done: doneReview2,
+      hint: doneReview2 ? "승인 완료" : "최종 검토/승인 필요",
+    },
+    {
+      key: "publish",
+      label: "게시(교육 노출)",
+      done: donePublish,
+      hint: donePublish ? "노출 중" : "승인 후 자동 게시",
+    },
+  ];
+
+  // activeKey 결정
+  let activeKey: CreatorFlowStepKey | null = null;
+
+  if (status === "APPROVED") {
+    activeKey = null;
+  } else if (status === "REJECTED") {
+    activeKey = isScriptApproved ? "review2" : "review1";
+  } else if (status === "FAILED") {
+    activeKey = isScriptApproved ? "video" : "script";
+  } else if (status === "REVIEW_PENDING") {
+    activeKey = isScriptApproved ? "review2" : "review1";
+  } else if (status === "GENERATING" || isPipelineRunning) {
+    activeKey = isScriptApproved ? "video" : "script";
+  } else {
+    if (!hasSourceFile) activeKey = "upload";
+    else if (!hasScript) activeKey = "script";
+    else if (!isScriptApproved) activeKey = "review1";
+    else if (!hasVideo) activeKey = "video";
+    else activeKey = "review2";
+  }
+
+  const activeIndex =
+    activeKey == null ? -1 : order.findIndex((k) => k === activeKey);
+
+  const steps: CreatorFlowStep[] = base.map((s) => {
+    const idx = order.findIndex((k) => k === s.key);
+
+    // error step
+    if (status === "REJECTED" && s.key === activeKey) {
+      return {
+        key: s.key,
+        label: s.label,
+        state: "error",
+        hint: "반려됨 · 새 버전으로 재작업",
+      };
+    }
+    if (status === "FAILED" && s.key === activeKey) {
+      return {
+        key: s.key,
+        label: s.label,
+        state: "error",
+        hint: "실패 · 재시도 필요",
+      };
+    }
+
+    // done
+    if (s.done) {
+      return { key: s.key, label: s.label, state: "done", hint: s.hint };
+    }
+
+    // active
+    if (activeKey != null && s.key === activeKey) {
+      let hint = s.hint;
+
+      if (status === "REVIEW_PENDING") {
+        hint = isScriptApproved ? "검토 중(2차)" : "검토 중(1차)";
+      } else if (status === "GENERATING" || isPipelineRunning) {
+        hint = isScriptApproved ? "생성 중(영상)" : "생성 중(스크립트)";
+      } else if (s.key === "review1") {
+        hint = "검토 요청 필요(1차)";
+      } else if (s.key === "review2") {
+        hint = "검토 요청 필요(2차)";
+      }
+
+      return { key: s.key, label: s.label, state: "active", hint };
+    }
+
+    // locked (active 이후 단계는 잠금)
+    if (activeIndex >= 0 && idx > activeIndex) {
+      return { key: s.key, label: s.label, state: "locked", hint: "잠금" };
+    }
+
+    // active 이전인데 done이 아닌 경우(데이터 비정합 방지): 잠금 처리
+    return { key: s.key, label: s.label, state: "locked", hint: "잠금" };
+  });
+
+  // 정책 잠금: 1차 승인 전에는 영상 생성/2차/게시 잠금
+  if (!isScriptApproved) {
+    const lockAfter: CreatorFlowStepKey[] = ["video", "review2", "publish"];
+    for (let i = 0; i < steps.length; i += 1) {
+      if (lockAfter.includes(steps[i].key) && steps[i].state !== "done") {
+        steps[i] = {
+          ...steps[i],
+          state: "locked",
+          hint: "1차 승인 후 가능",
+        };
+      }
+    }
+  }
+
+  return { steps, activeKey };
+}
+
+function StepBadgeText(step: CreatorFlowStep, index: number): string {
+  if (step.state === "done") return "✓";
+  if (step.state === "error") return "!";
+  return String(index + 1);
+}
+
+const CreatorFlowStepper: React.FC<{
+  steps: CreatorFlowStep[];
+  metaText?: string;
+}> = ({ steps, metaText }) => {
+  return (
+    <div className="cb-creator-stepper-wrap" aria-label="제작 단계">
+      <div className="cb-creator-stepper-head">
+        <div className="cb-creator-stepper-title">진행 단계</div>
+        {metaText ? (
+          <div className="cb-creator-stepper-meta">{metaText}</div>
+        ) : null}
+      </div>
+
+      <ol className="cb-creator-stepper" aria-label="제작 플로우">
+        {steps.map((s, idx) => (
+          <li
+            key={s.key}
+            className={cx(
+              "cb-creator-step",
+              s.state === "done" && "cb-creator-step--done",
+              s.state === "active" && "cb-creator-step--active",
+              s.state === "locked" && "cb-creator-step--locked",
+              s.state === "error" && "cb-creator-step--error"
+            )}
+            aria-current={s.state === "active" ? "step" : undefined}
+          >
+            <span className="cb-creator-step-badge" aria-hidden="true">
+              {StepBadgeText(s, idx)}
+            </span>
+            <span className="cb-creator-step-main">
+              <span className="cb-creator-step-label">{s.label}</span>
+              {s.hint ? (
+                <span className="cb-creator-step-hint">{s.hint}</span>
+              ) : null}
+            </span>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+};
+/* ========================= */
+
 const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
   anchor,
   onClose,
@@ -201,6 +763,11 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canOpen]);
 
+  const controller = useCreatorStudioController({
+    creatorName: creatorName ?? "VIDEO_CREATOR",
+    allowedDeptIds,
+  });
+
   const {
     departments,
     categories,
@@ -214,25 +781,97 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
     setQuery,
     sortMode,
     setSortMode,
-    filteredItems,
+
+    // 기존 필드들도 유지(상세/액션에서 사용)
+    filteredItems, // fallback 용으로만 사용(컨트롤러가 raw list를 안 줄 수도 있으므로)
     selectedItem,
     selectItem,
     createDraft,
     updateSelectedMeta,
     attachFileToSelected,
-    runPipelineForSelected,
-    runVideoOnlyForSelected,
+    runPipelineForSelected,     // (1차) 스크립트 생성
+    runVideoOnlyForSelected,    // (2차 준비) 영상 생성/재생성
     retryPipelineForSelected,
     updateSelectedScript,
-    requestReviewForSelected,
+    requestReviewForSelected,   // (1차/2차) 검토 요청
     reopenRejectedToDraft,
     deleteDraft,
     selectedValidation,
     toast,
-  } = useCreatorStudioController({
-    creatorName: creatorName ?? "VIDEO_CREATOR",
-    allowedDeptIds,
-  });
+  } = controller;
+
+  // 가능하면 raw list를 받아서 탭 매칭을 View에서 완결
+  const rawItems: CreatorWorkItem[] = useMemo(() => {
+    const maybe = controller as unknown as {
+      items?: CreatorWorkItem[];
+      allItems?: CreatorWorkItem[];
+      workItems?: CreatorWorkItem[];
+    };
+
+    const src =
+      (Array.isArray(maybe.items) && maybe.items) ||
+      (Array.isArray(maybe.allItems) && maybe.allItems) ||
+      (Array.isArray(maybe.workItems) && maybe.workItems) ||
+      (Array.isArray(filteredItems) && filteredItems) ||
+      [];
+
+    return src;
+  }, [controller, filteredItems]);
+
+  const [creatorStageFilter, setCreatorStageFilter] =
+    useState<CreatorStageFilter>("all");
+
+  // 탭 전환 시: stageFilter는 기본 all로 (빈 리스트로 오해하는 UX 방지)
+  useEffect(() => {
+    setCreatorStageFilter("all");
+  }, [tab]);
+
+  // 탭 매칭 + 검색 + 정렬을 View에서 수행 (정책 일관성 확보)
+  const tabMatchedItems = useMemo(() => {
+    return rawItems.filter((it) => matchTab(tab, it));
+  }, [rawItems, tab]);
+
+  const searchedItems = useMemo(() => {
+    return filterByQuery(tabMatchedItems, query, departments, templates, jobTrainings);
+  }, [tabMatchedItems, query, departments, templates, jobTrainings]);
+
+  const sortedItems = useMemo(() => {
+    return sortItems(searchedItems, sortMode);
+  }, [searchedItems, sortMode]);
+
+  const creatorStageCounts = useMemo(() => {
+    // draft/failed는 stage UI를 숨기므로 카운트도 의미 없음
+    if (tab === "draft" || tab === "failed") {
+      return { all: sortedItems.length, stage1: 0, stage2: 0, enabled: false };
+    }
+
+    let stage1 = 0;
+    let stage2 = 0;
+
+    for (const it of sortedItems) {
+      const st = getStageForTab(tab, it);
+      if (st === 1) stage1 += 1;
+      else if (st === 2) stage2 += 1;
+    }
+
+    return { all: sortedItems.length, stage1, stage2, enabled: stage1 + stage2 > 0 };
+  }, [sortedItems, tab]);
+
+  const visibleItems = useMemo(() => {
+    if (tab === "draft" || tab === "failed") return sortedItems;
+    if (creatorStageFilter === "all") return sortedItems;
+
+    const target = creatorStageFilter === "stage1" ? 1 : 2;
+    return sortedItems.filter((it) => getStageForTab(tab, it) === target);
+  }, [sortedItems, creatorStageFilter, tab]);
+
+  // 필터로 인해 선택 항목이 리스트에서 사라지면, 첫 항목으로 자동 이동
+  useEffect(() => {
+    if (!selectedItem) return;
+    if (visibleItems.length === 0) return;
+    const exists = visibleItems.some((it) => it.id === selectedItem.id);
+    if (!exists) selectItem(visibleItems[0].id);
+  }, [visibleItems, selectedItem, selectItem]);
 
   const isDeptCreator = creatorType === "DEPT_CREATOR";
 
@@ -509,13 +1148,26 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
     e.target.value = "";
   };
 
-  const disableMeta =
+  // ===== 1차/2차 플로우 판단 (selected 기준) =====
+  const scriptApprovedAt = selectedItem
+    ? readOptionalNumber(selectedItem, "scriptApprovedAt")
+    : null;
+  const selectedIsScriptApproved = scriptApprovedAt != null;
+
+  const isPipelineRunning =
+    Boolean(selectedItem?.pipeline?.state === "RUNNING") ||
+    selectedItem?.status === "GENERATING";
+
+  // 상태 기반 “행위 잠금”(공통)
+  const isHardLocked =
     !selectedItem ||
-    selectedItem.status === "GENERATING" ||
     selectedItem.status === "REVIEW_PENDING" ||
     selectedItem.status === "APPROVED" ||
     selectedItem.status === "REJECTED" ||
-    selectedItem.pipeline?.state === "RUNNING";
+    isPipelineRunning;
+
+  // 메타/스크립트 편집 잠금: 1차 승인 이후에는 편집 금지(영상 생성/2차 요청만)
+  const disableMeta = isHardLocked || selectedIsScriptApproved;
 
   const progress = selectedItem?.pipeline?.progress ?? 0;
   const progressScale = clamp(progress / 100, 0, 1);
@@ -545,24 +1197,136 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
 
   // 단일 축: 직무/4대(전사 필수)
   const isJob = selectedItem ? isJobCategory(selectedItem.categoryId) : false;
-  const mandatoryByCategory = selectedItem ? !isJobCategory(selectedItem.categoryId) : false;
+  const mandatoryByCategory = selectedItem
+    ? !isJobCategory(selectedItem.categoryId)
+    : false;
 
   // effectiveMandatory: 4대면 무조건 true, 아니면 isMandatory
   const effectiveMandatory = selectedItem
-    ? (mandatoryByCategory ? true : Boolean(selectedItem.isMandatory))
+    ? mandatoryByCategory
+      ? true
+      : Boolean(selectedItem.isMandatory)
     : false;
 
   // 전사/부서 상호배타: targetDeptIds=[]가 “전사”
   const isAllCompany = selectedItem
-    ? (effectiveMandatory ? true : selectedItem.targetDeptIds.length === 0)
+    ? effectiveMandatory
+      ? true
+      : selectedItem.targetDeptIds.length === 0
     : false;
 
-  // 스크립트 수정 후 “영상만 재생성” 조건
+  // 에셋 유무
   const hasScript = (selectedItem?.assets?.script?.trim().length ?? 0) > 0;
-  const hasSourceFile = (selectedItem?.assets?.sourceFileName ?? "").trim().length > 0;
+  const hasSourceFile =
+    (selectedItem?.assets?.sourceFileName ?? "").trim().length > 0;
   const hasVideo = (selectedItem?.assets?.videoUrl ?? "").trim().length > 0;
 
-  const canVideoOnly = hasScript && hasSourceFile && !hasVideo;
+  // 버튼 가드(뷰 레벨)
+  const canGenerateScript =
+    !!selectedItem &&
+    selectedItem.status === "DRAFT" &&
+    !isHardLocked &&
+    hasSourceFile &&
+    !selectedIsScriptApproved;
+
+  const canGenerateVideo =
+    !!selectedItem &&
+    selectedItem.status === "DRAFT" &&
+    !isHardLocked &&
+    selectedIsScriptApproved &&
+    hasSourceFile &&
+    hasScript;
+
+  const scriptGenLabel = hasScript ? "스크립트 재생성" : "스크립트 생성";
+  const videoGenLabel = hasVideo ? "영상 재생성" : "영상 생성";
+
+  function phaseHintFor(item: CreatorWorkItem | null) {
+    if (!item) return "";
+
+    const sa = isScriptApproved(item);
+
+    if (item.status === "REVIEW_PENDING") {
+      return sa ? "2차(최종) 검토 대기" : "1차(스크립트) 검토 대기";
+    }
+    if (item.status === "APPROVED") return "2차 승인 완료(게시됨)";
+    if (item.status === "REJECTED") return "반려됨";
+    if (item.status === "FAILED") return "생성 실패";
+
+    // DRAFT/GENERATING
+    if (item.status === "GENERATING") return "생성 중…";
+    const _hasSource =
+      (item.assets?.sourceFileName ?? "").trim().length > 0;
+    const _hasScript = 
+      (item.assets?.script ?? "").trim().length > 0;
+    const _hasVideo =
+      (item.assets?.videoUrl ?? "").trim().length > 0;
+
+    if (!_hasSource) return "자료 업로드 대기";
+    if (!_hasScript && !sa) return "스크립트 생성 대기";
+    if (!sa) return "1차(스크립트) 검토 요청 가능";
+    if (!_hasVideo) return "1차 승인 완료 · 영상 생성 대기";
+    return "2차(최종) 검토 요청 가능";
+  }
+
+  function listStepText(it: CreatorWorkItem) {
+    const sa = isScriptApproved(it);
+
+    if (it.status === "REVIEW_PENDING") {
+      const st = inferReviewStage(it);
+      return st === "FINAL" ? " · 2차 검토" : " · 1차 검토";
+    }
+    if (it.status === "REJECTED") {
+      const st = inferRejectedStage(it);
+      return st === "FINAL" ? " · 2차 반려" : " · 1차 반려";
+    }
+    if (it.status === "APPROVED") return " · 2차 승인 완료";
+    if ((it.status === "DRAFT" || it.status === "GENERATING") && sa) return " · 1차 승인 완료";
+    return "";
+  }
+
+  const selectedId = selectedItem?.id ?? null;
+  const selectedStatus = selectedItem?.status ?? null;
+
+  // ===== Stepper model (NEW) =====
+  const flowModel = useMemo(() => {
+    if (!selectedId || !selectedStatus) return null;
+
+    return buildCreatorFlowSteps({
+      status: selectedStatus,
+      hasSourceFile,
+      hasScript,
+      hasVideo,
+      isScriptApproved: selectedIsScriptApproved,
+      isPipelineRunning,
+    });
+  }, [
+    selectedId,
+    selectedStatus,
+    hasSourceFile,
+    hasScript,
+    hasVideo,
+    selectedIsScriptApproved,
+    isPipelineRunning,
+  ]);
+
+  const flowMetaText = selectedItem
+    ? `현재: ${phaseHintFor(selectedItem)}${selectedIsScriptApproved && scriptApprovedAt
+        ? ` · 1차 승인 ${formatDateTime(scriptApprovedAt)}`
+        : ""
+      }`
+    : "";
+  // ==============================
+
+  // Empty copy
+  const emptyCopy = useMemo(() => {
+    return getEmptyCopy(tab, creatorStageFilter, query);
+  }, [tab, creatorStageFilter, query]);
+
+  // 승인 탭 Stage 필터가 무의미하게 숨겨지는 것을 방지하기 위해 enabled 플래그 사용
+  const showStagePills = tab !== "draft" && tab !== "failed" && creatorStageCounts.enabled;
+
+  // Detail pill (selected)
+  const selectedPill = selectedItem ? getDisplayStatusPill(selectedItem) : null;
 
   return (
     <div className="cb-creator-wrapper" aria-hidden={false}>
@@ -630,7 +1394,8 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
               <div className="cb-creator-title">교육 콘텐츠 제작</div>
               <div className="cb-creator-subrow">
                 <div className="cb-creator-subtitle">
-                  자료 업로드 → 자동 생성(스크립트/영상) → 미리보기/수정 → 검토 요청(SoD)
+                  자료 업로드 → <b>스크립트 생성</b> → <b>1차(스크립트) 승인</b> →{" "}
+                  <b>영상 생성</b> → <b>2차(최종) 승인</b> → 게시(교육 노출)
                 </div>
 
                 <button
@@ -653,7 +1418,13 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
                 <div className="cb-creator-left-top">
                   <div className="cb-creator-tabs">
                     {(
-                      ["draft", "review_pending", "rejected", "approved", "failed"] as CreatorTabId[]
+                      [
+                        "draft",
+                        "review_pending",
+                        "rejected",
+                        "approved",
+                        "failed",
+                      ] as CreatorTabId[]
                     ).map((t) => (
                       <button
                         key={t}
@@ -670,12 +1441,61 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
                     ))}
                   </div>
 
+                  {showStagePills && (
+                    <div className="cb-creator-stage-row">
+                      <div className="cb-reviewer-stage-pills">
+                        <button
+                          type="button"
+                          className={cx(
+                            "cb-reviewer-stage-pill",
+                            creatorStageFilter === "all" &&
+                              "cb-reviewer-stage-pill--active"
+                          )}
+                          onClick={() => setCreatorStageFilter("all")}
+                        >
+                          전체{" "}
+                          <span className="cb-reviewer-stage-count">
+                            {creatorStageCounts.all}
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          className={cx(
+                            "cb-reviewer-stage-pill",
+                            creatorStageFilter === "stage1" &&
+                              "cb-reviewer-stage-pill--active"
+                          )}
+                          onClick={() => setCreatorStageFilter("stage1")}
+                        >
+                          1차{" "}
+                          <span className="cb-reviewer-stage-count">
+                            {creatorStageCounts.stage1}
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          className={cx(
+                            "cb-reviewer-stage-pill",
+                            creatorStageFilter === "stage2" &&
+                              "cb-reviewer-stage-pill--active"
+                          )}
+                          onClick={() => setCreatorStageFilter("stage2")}
+                        >
+                          2차{" "}
+                          <span className="cb-reviewer-stage-count">
+                            {creatorStageCounts.stage2}
+                          </span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
                   <div className="cb-creator-spacer-10" />
 
                   <div className="cb-creator-search-row">
                     <input
                       className={cx("cb-admin-input", "cb-creator-search-input")}
-                      placeholder="제목/카테고리(직무/4대)/부서/템플릿/Training ID/버전 검색"
+                      placeholder="제목/카테고리(직무/4대)/부서/템플릿/Training ID/버전/단계 검색"
                       value={query}
                       onMouseDown={(e) => e.stopPropagation()}
                       onChange={(e) => setQuery(e.target.value)}
@@ -684,7 +1504,9 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
                       className={cx("cb-admin-select", "cb-creator-search-select")}
                       value={sortMode}
                       onMouseDown={(e) => e.stopPropagation()}
-                      onChange={(e) => setSortMode(e.target.value as CreatorSortMode)}
+                      onChange={(e) =>
+                        setSortMode(e.target.value as CreatorSortMode)
+                      }
                     >
                       <option value="updated_desc">최근 수정</option>
                       <option value="created_desc">최근 생성</option>
@@ -695,24 +1517,28 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
                 </div>
 
                 <div className="cb-creator-list">
-                  {filteredItems.length === 0 ? (
+                  {visibleItems.length === 0 ? (
                     <div className="cb-creator-empty">
-                      <div className="cb-creator-empty-title">목록이 비어있습니다</div>
-                      <div className="cb-creator-empty-desc">
-                        현재 필터 조건에 해당하는 제작 콘텐츠가 없습니다.
-                      </div>
+                      <div className="cb-creator-empty-title">{emptyCopy.title}</div>
+                      <div className="cb-creator-empty-desc">{emptyCopy.desc}</div>
                     </div>
                   ) : (
-                    filteredItems.map((it) => {
-                      const kindText = isJobCategory(it.categoryId) ? "직무" : "4대(전사필수)";
+                    visibleItems.map((it) => {
+                      const kindText = isJobCategory(it.categoryId)
+                        ? "직무"
+                        : "4대(전사필수)";
                       const v = it.version ?? 1;
+                      const stepText = listStepText(it);
+                      const pill = getDisplayStatusPill(it);
+
                       return (
                         <button
                           key={it.id}
                           className={cx(
                             "cb-reviewer-item",
                             "cb-creator-item",
-                            selectedItem?.id === it.id && "cb-reviewer-item--active"
+                            selectedItem?.id === it.id &&
+                              "cb-reviewer-item--active"
                           )}
                           onMouseDown={(e) => e.stopPropagation()}
                           onClick={() => selectItem(it.id)}
@@ -725,15 +1551,17 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
                                 <span className="cb-creator-muted">{`v${v}`}</span>
                               </div>
                               <div className="cb-creator-item-sub">
-                                {it.categoryLabel} · {kindText} · {templateLabel(it.templateId)}
-                                {it.jobTrainingId ? ` · ${jobTrainingLabel(it.jobTrainingId)}` : ""}
+                                {it.categoryLabel} · {kindText} ·{" "}
+                                {templateLabel(it.templateId)}
+                                {it.jobTrainingId
+                                  ? ` · ${jobTrainingLabel(it.jobTrainingId)}`
+                                  : ""}
                                 {it.isMandatory ? " · 필수" : ""}
+                                {stepText}
                               </div>
                             </div>
 
-                            <span className={statusToneClass(it.status)}>
-                              {labelStatus(it.status)}
-                            </span>
+                            <span className={pill.className}>{pill.label}</span>
                           </div>
 
                           <div className="cb-creator-item-bottom">
@@ -758,7 +1586,9 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
                 {!selectedItem ? (
                   <div className="cb-creator-right-empty">
                     <div className="cb-creator-empty">
-                      <div className="cb-creator-empty-title">선택된 콘텐츠가 없습니다</div>
+                      <div className="cb-creator-empty-title">
+                        선택된 콘텐츠가 없습니다
+                      </div>
                       <div className="cb-creator-empty-desc">
                         왼쪽 목록에서 제작할 콘텐츠를 선택해주세요.
                       </div>
@@ -772,35 +1602,48 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
                         <div className="cb-creator-detail-title-row">
                           <div className="cb-creator-detail-title">
                             {selectedItem.title}{" "}
-                            <span className="cb-creator-muted">{`v${selectedItem.version ?? 1}`}</span>
+                            <span className="cb-creator-muted">{`v${selectedItem.version ?? 1
+                              }`}</span>
                           </div>
-                          <span
-                            className={cx(
-                              statusToneClass(selectedItem.status),
-                              "cb-creator-detail-status"
-                            )}
-                          >
-                            {labelStatus(selectedItem.status)}
-                          </span>
+
+                          {selectedPill ? (
+                            <span
+                              className={cx(
+                                selectedPill.className,
+                                "cb-creator-detail-status"
+                              )}
+                            >
+                              {selectedPill.label}
+                            </span>
+                          ) : null}
                         </div>
+
                         <div className="cb-creator-detail-subline">
                           생성: {formatDateTime(selectedItem.createdAt)} · 수정:{" "}
                           {formatDateTime(selectedItem.updatedAt)} · 작성자:{" "}
                           {selectedItem.createdByName}
+                          {" · "}
+                          <span className="cb-creator-muted">
+                            단계: {phaseHintFor(selectedItem)}
+                            {selectedIsScriptApproved && scriptApprovedAt
+                              ? ` (1차 승인 ${formatDateTime(scriptApprovedAt)})`
+                              : ""}
+                          </span>
                         </div>
                       </div>
 
                       <div className="cb-creator-detail-header-actions">
                         {(selectedItem.status === "DRAFT" ||
                           selectedItem.status === "FAILED") && (
-                          <button
-                            className="cb-admin-ghost-btn"
-                            onMouseDown={(e) => e.stopPropagation()}
-                            onClick={deleteDraft}
-                          >
-                            삭제
-                          </button>
-                        )}
+                            <button
+                              className="cb-admin-ghost-btn"
+                              onMouseDown={(e) => e.stopPropagation()}
+                              onClick={deleteDraft}
+                              type="button"
+                            >
+                              삭제
+                            </button>
+                          )}
                       </div>
                     </div>
 
@@ -811,25 +1654,42 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
                         {selectedItem.status === "REJECTED" &&
                           selectedItem.rejectedComment && (
                             <div className="cb-reviewer-detail-card">
-                              <div className="cb-reviewer-detail-card-title">반려 사유</div>
+                              <div className="cb-reviewer-detail-card-title">
+                                반려 사유
+                              </div>
                               <div className="cb-reviewer-detail-card-desc">
                                 {selectedItem.rejectedComment}
                               </div>
                               <div className="cb-creator-spacer-8" />
                               <div className="cb-creator-muted">
-                                반려 건은 읽기 전용입니다. 아래 “새 버전으로 편집”을 눌러 재작업을 시작하세요.
+                                반려 건은 읽기 전용입니다. 아래 “새 버전으로 편집”을
+                                눌러 재작업을 시작하세요.
                               </div>
                             </div>
                           )}
 
-                        {selectedItem.status === "FAILED" && selectedItem.failedReason && (
-                          <div className="cb-reviewer-detail-card">
-                            <div className="cb-reviewer-detail-card-title">생성 실패</div>
-                            <div className="cb-reviewer-detail-card-desc">
-                              {selectedItem.failedReason}
+                        {selectedItem.status === "FAILED" &&
+                          selectedItem.failedReason && (
+                            <div className="cb-reviewer-detail-card">
+                              <div className="cb-reviewer-detail-card-title">
+                                생성 실패
+                              </div>
+                              <div className="cb-reviewer-detail-card-desc">
+                                {selectedItem.failedReason}
+                              </div>
                             </div>
+                          )}
+
+                        {/* ===== Stepper card (NEW) ===== */}
+                        {flowModel?.steps ? (
+                          <div className="cb-reviewer-detail-card">
+                            <CreatorFlowStepper
+                              steps={flowModel.steps}
+                              metaText={flowMetaText}
+                            />
                           </div>
-                        )}
+                        ) : null}
+                        {/* ============================ */}
 
                         {/* Version */}
                         <div className="cb-reviewer-detail-card">
@@ -837,7 +1697,7 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
                           <div className="cb-reviewer-detail-card-desc">
                             현재 버전: <b>{`v${selectedItem.version ?? 1}`}</b>
                             {Array.isArray(selectedItem.versionHistory) &&
-                            selectedItem.versionHistory.length > 0
+                              selectedItem.versionHistory.length > 0
                               ? ` · 이전 버전 ${selectedItem.versionHistory.length}개 기록됨`
                               : " · 이전 버전 기록 없음"}
                           </div>
@@ -909,7 +1769,9 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
 
                             {/* jobTrainingId: 직무일 때만 활성 */}
                             <label className="cb-creator-field">
-                              <div className="cb-creator-field-label">직무교육(Training ID)</div>
+                              <div className="cb-creator-field-label">
+                                직무교육(Training ID)
+                              </div>
 
                               {isJob ? (
                                 <CreatorTrainingSelect
@@ -927,7 +1789,9 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
                                   disabled
                                   onMouseDown={(e) => e.stopPropagation()}
                                 >
-                                  <option value="">해당 없음 (4대 의무교육 카테고리)</option>
+                                  <option value="">
+                                    해당 없음 (4대 의무교육 카테고리)
+                                  </option>
                                 </select>
                               )}
                             </label>
@@ -990,17 +1854,23 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
                                   <>
                                     {departments.map((d) => {
                                       const checked =
-                                        !isAllCompany && selectedItem.targetDeptIds.includes(d.id);
+                                        !isAllCompany &&
+                                        selectedItem.targetDeptIds.includes(d.id);
                                       const disabled = disableMeta || isAllCompany;
                                       return (
-                                        <label key={d.id} className="cb-creator-checkitem">
+                                        <label
+                                          key={d.id}
+                                          className="cb-creator-checkitem"
+                                        >
                                           <input
                                             type="checkbox"
                                             checked={checked}
                                             disabled={disabled}
                                             onMouseDown={(e) => e.stopPropagation()}
                                             onChange={(e) => {
-                                              const base = isAllCompany ? [] : selectedItem.targetDeptIds;
+                                              const base = isAllCompany
+                                                ? []
+                                                : selectedItem.targetDeptIds;
 
                                               const next = e.target.checked
                                                 ? Array.from(new Set([...base, d.id]))
@@ -1057,15 +1927,24 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
                               )}
                             </label>
                           </div>
+
+                          {selectedIsScriptApproved && (
+                            <div className="cb-creator-muted" style={{ marginTop: 8 }}>
+                              1차(스크립트) 승인 이후에는 기본 정보/스크립트 변경이 제한됩니다.
+                              수정이 필요하면 반려 처리 후 “새 버전으로 편집” 흐름으로 진행하세요.
+                            </div>
+                          )}
                         </div>
 
                         {/* Upload + Pipeline */}
                         <div className="cb-reviewer-detail-card">
-                          <div className="cb-reviewer-detail-card-title">자료 업로드 & 자동 생성</div>
+                          <div className="cb-reviewer-detail-card-title">
+                            자료 업로드 & 자동 생성
+                          </div>
                           <div className="cb-reviewer-detail-card-desc">
-                            자료(PDF/DOC/DOCX/PPT/PPTX/HWP/HWPX)를 업로드하면 스크립트(TTS) +
-                            슬라이드 합성으로 영상 초안을 생성합니다. 스크립트 수정 후에는{" "}
-                            <b>영상만 재생성</b>을 사용하세요.
+                            <b>1차:</b> 자료 업로드 후 스크립트를 먼저 생성하고 스크립트만
+                            검토 요청합니다. <b>2차:</b> 1차 승인 후 영상 생성/재생성을
+                            수행한 뒤 최종 검토 요청을 보냅니다.
                           </div>
 
                           <div className="cb-creator-upload-row">
@@ -1074,6 +1953,7 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
                               onMouseDown={(e) => e.stopPropagation()}
                               onClick={onPickFile}
                               disabled={disableMeta}
+                              type="button"
                             >
                               자료 업로드
                             </button>
@@ -1090,7 +1970,9 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
                                   업로드됨: {selectedItem.assets.sourceFileName}
                                   {selectedItem.assets.sourceFileSize ? (
                                     <span className="cb-creator-muted">
-                                      {` (${formatBytes(selectedItem.assets.sourceFileSize)})`}
+                                      {` (${formatBytes(
+                                        selectedItem.assets.sourceFileSize
+                                      )})`}
                                     </span>
                                   ) : null}
                                 </>
@@ -1106,15 +1988,22 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
                                 상태:{" "}
                                 {selectedItem.pipeline.state === "RUNNING"
                                   ? selectedItem.pipeline.message ?? "진행 중"
-                                  : labelStatus(selectedItem.status)}
+                                  : phaseHintFor(selectedItem)}
                               </div>
+
                               <div className="cb-creator-pipeline-status-desc">
                                 {selectedItem.pipeline.state !== "IDLE" &&
-                                selectedItem.pipeline.progress > 0
+                                  selectedItem.pipeline.progress > 0
                                   ? `진행률 ${selectedItem.pipeline.progress}%`
-                                  : canVideoOnly
-                                    ? "스크립트/버전 변경으로 영상이 비어있습니다. 영상만 재생성하세요."
-                                    : "자동 생성 실행 전"}
+                                  : !hasSourceFile
+                                    ? "자료를 업로드하세요."
+                                    : !selectedIsScriptApproved
+                                      ? hasScript
+                                        ? "스크립트가 생성되었습니다. 1차(스크립트) 검토 요청을 제출하세요."
+                                        : "스크립트를 생성하세요."
+                                      : !hasVideo
+                                        ? "1차 승인 완료. 영상 생성 버튼으로 2차 준비를 진행하세요."
+                                        : "영상이 준비되었습니다. 최종 검토 요청(2차)을 제출하세요."}
                               </div>
                             </div>
 
@@ -1124,26 +2013,29 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
                                   className="cb-admin-primary-btn"
                                   onMouseDown={(e) => e.stopPropagation()}
                                   onClick={retryPipelineForSelected}
+                                  type="button"
                                 >
                                   재시도
                                 </button>
-                              ) : canVideoOnly ? (
+                              ) : selectedIsScriptApproved ? (
                                 <button
                                   className="cb-admin-primary-btn"
                                   onMouseDown={(e) => e.stopPropagation()}
                                   onClick={runVideoOnlyForSelected}
-                                  disabled={disableMeta || selectedItem.status === "GENERATING"}
+                                  disabled={!canGenerateVideo}
+                                  type="button"
                                 >
-                                  영상만 재생성
+                                  {videoGenLabel}
                                 </button>
                               ) : (
                                 <button
                                   className="cb-admin-primary-btn"
                                   onMouseDown={(e) => e.stopPropagation()}
                                   onClick={runPipelineForSelected}
-                                  disabled={disableMeta || selectedItem.status === "GENERATING"}
+                                  disabled={!canGenerateScript}
+                                  type="button"
                                 >
-                                  자동 생성 실행
+                                  {scriptGenLabel}
                                 </button>
                               )}
                             </div>
@@ -1159,12 +2051,18 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
                         <div className="cb-reviewer-detail-card">
                           <div className="cb-reviewer-detail-card-title">미리보기</div>
                           <div className="cb-reviewer-detail-card-desc">
-                            생성된 스크립트/영상을 확인하고 필요한 경우 수정한 뒤 검토 요청을 보냅니다.
+                            <b>1차:</b> 스크립트를 확인/수정 후 검토 요청 <b>2차:</b>{" "}
+                            (1차 승인 후) 영상까지 생성해 최종 검토 요청
                           </div>
 
                           <div className="cb-creator-preview-grid">
                             <div className="cb-creator-preview-col">
-                              <div className="cb-creator-preview-label">스크립트</div>
+                              <div className="cb-creator-preview-label">
+                                스크립트{" "}
+                                {selectedIsScriptApproved
+                                  ? "(1차 승인 완료)"
+                                  : "(1차 검토 대상)"}
+                              </div>
                               <textarea
                                 className={cx(
                                   "cb-reviewer-textarea",
@@ -1172,14 +2070,23 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
                                 )}
                                 value={selectedItem.assets.script ?? ""}
                                 disabled={disableMeta}
-                                placeholder="자동 생성 후 스크립트가 표시됩니다."
+                                placeholder="스크립트 생성 후 표시됩니다."
                                 onMouseDown={(e) => e.stopPropagation()}
-                                onChange={(e) => updateSelectedScript(e.target.value)}
+                                onChange={(e) =>
+                                  updateSelectedScript(e.target.value)
+                                }
                               />
+                              {selectedIsScriptApproved && (
+                                <div className="cb-creator-muted" style={{ marginTop: 6 }}>
+                                  1차 승인 이후 스크립트는 잠금됩니다.
+                                </div>
+                              )}
                             </div>
 
                             <div className="cb-creator-preview-col">
-                              <div className="cb-creator-preview-label">영상</div>
+                              <div className="cb-creator-preview-label">
+                                영상 (2차 검토 대상)
+                              </div>
                               <div className="cb-creator-video-frame">
                                 {videoUrl ? (
                                   canRenderVideoPlayer ? (
@@ -1200,7 +2107,9 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
                                   )
                                 ) : (
                                   <div className="cb-creator-video-placeholder">
-                                    아직 생성된 영상이 없습니다.
+                                    {!selectedIsScriptApproved
+                                      ? "1차 승인 후 영상 생성이 가능합니다."
+                                      : "아직 생성된 영상이 없습니다. 영상 생성 버튼을 실행하세요."}
                                   </div>
                                 )}
                               </div>
@@ -1212,7 +2121,9 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
                         {!selectedValidation.ok && selectedItem.status === "DRAFT" && (
                           <div className="cb-reviewer-detail-card">
                             <div className="cb-reviewer-detail-card-title">
-                              검토 요청 전 체크
+                              {selectedIsScriptApproved
+                                ? "최종(2차) 검토 요청 전 체크"
+                                : "1차(스크립트) 검토 요청 전 체크"}
                             </div>
                             <div className="cb-reviewer-detail-card-desc">
                               아래 항목을 충족해야 검토 요청을 보낼 수 있습니다.
@@ -1231,14 +2142,20 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
                     <div className="cb-creator-actionbar">
                       <div className="cb-creator-actionbar-hint">
                         {selectedItem.status === "REVIEW_PENDING"
-                          ? "검토 대기 중입니다. 검토자는 승인/반려 처리 후 결과를 남깁니다."
+                          ? selectedIsScriptApproved
+                            ? "2차(최종) 검토 대기 중입니다. 검토자는 스크립트/영상을 확인 후 최종 승인/반려를 처리합니다."
+                            : "1차(스크립트) 검토 대기 중입니다. 검토자는 스크립트를 확인 후 1차 승인/반려를 처리합니다."
                           : selectedItem.status === "APPROVED"
-                            ? "승인/게시 상태입니다. 제작자는 수정/재배포에 개입할 수 없습니다."
+                            ? "최종(2차) 승인 완료 상태입니다. 교육 페이지에 게시(노출)됩니다."
                             : selectedItem.status === "REJECTED"
                               ? "반려되었습니다. ‘새 버전으로 편집’ 후 수정/재생성하고 다시 검토 요청을 제출하세요."
-                              : canVideoOnly
-                                ? "스크립트/버전 변경으로 영상이 비어있습니다. 영상만 재생성 후 검토 요청을 제출하세요."
-                                : "초안 상태에서 자동 생성/수정 후 검토 요청을 제출하세요."}
+                              : !hasSourceFile
+                                ? "자료 업로드 후 스크립트를 생성하고 1차(스크립트) 검토 요청을 제출하세요."
+                                : !selectedIsScriptApproved
+                                  ? "스크립트를 생성/수정한 뒤 1차(스크립트) 검토 요청을 제출하세요."
+                                  : !hasVideo
+                                    ? "1차 승인 완료. 먼저 영상 생성 후 최종(2차) 검토 요청을 제출하세요."
+                                    : "영상까지 확인한 뒤 최종(2차) 검토 요청을 제출하세요."}
                       </div>
 
                       <div className="cb-creator-actionbar-actions">
@@ -1247,19 +2164,47 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
                             className="cb-admin-primary-btn"
                             onMouseDown={(e) => e.stopPropagation()}
                             onClick={reopenRejectedToDraft}
+                            type="button"
                           >
                             새 버전으로 편집
+                          </button>
+                        ) : selectedItem.status === "APPROVED" ? (
+                          <button className="cb-admin-primary-btn" type="button" disabled>
+                            승인 완료
+                          </button>
+                        ) : selectedItem.status === "REVIEW_PENDING" ? (
+                          <button className="cb-admin-primary-btn" type="button" disabled>
+                            {selectedIsScriptApproved ? "검토 중(2차)" : "검토 중(1차)"}
+                          </button>
+                        ) : selectedItem.status === "FAILED" ? (
+                          <button
+                            className="cb-admin-primary-btn"
+                            onMouseDown={(e) => e.stopPropagation()}
+                            onClick={retryPipelineForSelected}
+                            type="button"
+                          >
+                            재시도
+                          </button>
+                        ) : selectedIsScriptApproved && !hasVideo ? (
+                          // 정책: 1차 승인 후에는 "영상 생성"이 우선 CTA
+                          <button
+                            className="cb-admin-primary-btn"
+                            onMouseDown={(e) => e.stopPropagation()}
+                            onClick={runVideoOnlyForSelected}
+                            disabled={!canGenerateVideo}
+                            type="button"
+                          >
+                            {videoGenLabel}
                           </button>
                         ) : (
                           <button
                             className="cb-admin-primary-btn"
                             onMouseDown={(e) => e.stopPropagation()}
                             onClick={requestReviewForSelected}
-                            disabled={
-                              !selectedValidation.ok || selectedItem.status !== "DRAFT"
-                            }
+                            disabled={!selectedValidation.ok || selectedItem.status !== "DRAFT"}
+                            type="button"
                           >
-                            검토 요청
+                            {selectedIsScriptApproved ? "최종 검토 요청(2차)" : "스크립트 검토 요청(1차)"}
                           </button>
                         )}
                       </div>

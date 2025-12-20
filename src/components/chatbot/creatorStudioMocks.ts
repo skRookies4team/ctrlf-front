@@ -145,6 +145,7 @@ export function labelStatus(s: CreatorStatus): string {
 
 export function defaultPipeline(): CreatorPipeline {
   return {
+    mode: "FULL" as CreatorPipeline["mode"],
     state: "IDLE",
     stage: null,
     progress: 0,
@@ -152,20 +153,18 @@ export function defaultPipeline(): CreatorPipeline {
 }
 
 function uid(prefix: string): string {
-  return `${prefix}-${Math.random().toString(16).slice(2)}-${Date.now().toString(
-    16
-  )}`;
+  return `${prefix}-${Math.random().toString(16).slice(2)}-${Date.now().toString(16)}`;
 }
 
 /**
  * 파이프라인에서 생성될 mock 스크립트
  */
-export function mockGenerateScript(title: string, categoryLabel: string): string {
+export function mockGenerateScript(title: string, categoryLabelText: string): string {
   return [
     `# ${title}`,
     ``,
     `## 1. 목적`,
-    `- 본 교육은 "${categoryLabel}" 관련 주요 원칙과 실무 행동 기준을 이해시키는 것을 목표로 합니다.`,
+    `- 본 교육은 "${categoryLabelText}" 관련 주요 원칙과 실무 행동 기준을 이해시키는 것을 목표로 합니다.`,
     ``,
     `## 2. 핵심 메시지`,
     `- 원칙을 한 문장으로 정리하고, 위반 사례를 피하는 방법을 설명합니다.`,
@@ -188,15 +187,13 @@ export function mockVideoUrl(itemId: string): string {
   return `mock://video/${itemId}`;
 }
 
-export function createNewDraftItem(
-  params?: Partial<CreatorWorkItem>
-): CreatorWorkItem {
+export function createNewDraftItem(params?: Partial<CreatorWorkItem>): CreatorWorkItem {
   const now = Date.now();
   const category = CREATOR_CATEGORIES[0]; // 기본: "직무"
   const resolvedCategoryId = params?.categoryId ?? category.id;
   const kind = getCategoryKind(resolvedCategoryId);
 
-  const isMandatoryCategory = kind === "MANDATORY";
+  const isMandatoryCategoryFlag = kind === "MANDATORY";
 
   const version = params?.version ?? 1;
   const versionHistory: CreatorVersionSnapshot[] = params?.versionHistory ?? [];
@@ -213,21 +210,27 @@ export function createNewDraftItem(
     templateId: params?.templateId ?? CREATOR_VIDEO_TEMPLATES[0].id,
 
     // JOB일 때만 존재
-    jobTrainingId:
-      isMandatoryCategory
-        ? undefined
-        : (params?.jobTrainingId ?? CREATOR_JOB_TRAININGS[0].id),
+    jobTrainingId: isMandatoryCategoryFlag
+      ? undefined
+      : (params?.jobTrainingId ?? CREATOR_JOB_TRAININGS[0].id),
 
     // 4대는 전사 고정
-    targetDeptIds: isMandatoryCategory ? [] : (params?.targetDeptIds ?? ["D006"]),
+    targetDeptIds: isMandatoryCategoryFlag ? [] : (params?.targetDeptIds ?? ["D006"]),
 
     // 단일 축 고정: 4대면 true, 직무면 false
-    isMandatory: isMandatoryCategory,
+    isMandatory: isMandatoryCategoryFlag,
 
     status: params?.status ?? "DRAFT",
     createdAt: params?.createdAt ?? now,
     updatedAt: params?.updatedAt ?? now,
     createdByName: params?.createdByName ?? "VIDEO_CREATOR",
+
+    /**
+     * 2단계 승인 플로우 표현용(선택 필드)
+     * - 1차(스크립트) 승인 완료 시점(epoch ms)
+     */
+    scriptApprovedAt: params?.scriptApprovedAt,
+
     rejectedComment: params?.rejectedComment,
     failedReason: params?.failedReason,
 
@@ -247,9 +250,11 @@ export function createNewDraftItem(
 export function createMockCreatorWorkItems(): CreatorWorkItem[] {
   const now = Date.now();
   const d = (days: number) => now - days * 24 * 60 * 60 * 1000;
+  const h = (hours: number) => now - hours * 60 * 60 * 1000;
 
-  // 성공 파이프라인 공통 생성기(중복 줄이기)
+  // 최종(영상 포함) 성공 파이프라인
   const success = (daysAgo: number, durMs: number, msg = "생성 완료"): CreatorPipeline => ({
+    mode: "FULL" as CreatorPipeline["mode"],
     state: "SUCCESS",
     stage: "DONE",
     progress: 100,
@@ -258,8 +263,20 @@ export function createMockCreatorWorkItems(): CreatorWorkItem[] {
     message: msg,
   });
 
+  // 1차(스크립트만) 성공 파이프라인
+  const scriptOk = (daysAgo: number, durMs: number, msg = "스크립트 생성 완료"): CreatorPipeline => ({
+    mode: "FULL" as CreatorPipeline["mode"],
+    state: "SUCCESS",
+    stage: "SCRIPT",
+    progress: 100,
+    startedAt: d(daysAgo) + 1000,
+    finishedAt: d(daysAgo) + 1000 + durMs,
+    message: msg,
+  });
+
   // 실패 파이프라인 공통 생성기
   const failed = (daysAgo: number, progress: number, msg: string): CreatorPipeline => ({
+    mode: "FULL" as CreatorPipeline["mode"],
     state: "FAILED",
     stage: "SCRIPT",
     progress,
@@ -271,11 +288,10 @@ export function createMockCreatorWorkItems(): CreatorWorkItem[] {
   /**
    * =========================
    * 1) DRAFT (초안)
-   * - 아직 자동 생성 전 / 또는 스크립트만 수정되어 "영상만 재생성"이 뜨는 케이스 포함
    * =========================
    */
 
-  // 공통 직무(전사 대상) — 제목/Training ID 정합
+  // 공통 직무(전사 대상)
   const item1 = createNewDraftItem({
     title: "직무교육(공통): 정보자산·문서 반출 관리 실무 (JT-COM-004)",
     categoryId: "C001",
@@ -283,7 +299,6 @@ export function createMockCreatorWorkItems(): CreatorWorkItem[] {
     jobTrainingId: "JT-COM-004",
     templateId: "T002",
     targetDeptIds: [], // 전사
-    isMandatory: false,
     status: "DRAFT",
     createdAt: d(2),
     updatedAt: d(0),
@@ -296,7 +311,7 @@ export function createMockCreatorWorkItems(): CreatorWorkItem[] {
     },
   });
 
-  // 개발팀 — 스크립트만 수정된 상태(영상 없음) → "영상만 재생성" UX 확인용
+  // 개발팀 — 1차 승인 완료 후 DRAFT로 되돌아온 케이스(영상 생성/재생성 활성화 시나리오)
   const item2 = createNewDraftItem({
     title: "직무교육(개발팀): 보안 코딩 기본 (JT-DEV-601)",
     categoryId: "C001",
@@ -304,21 +319,18 @@ export function createMockCreatorWorkItems(): CreatorWorkItem[] {
     jobTrainingId: "JT-DEV-601",
     templateId: "T001",
     targetDeptIds: ["D006"],
-    isMandatory: false,
     status: "DRAFT",
     createdAt: d(1),
     updatedAt: d(1),
     createdByName: "김지훈(개발팀)",
     assets: {
       sourceFileName: "JT-DEV-601_secure_coding_basics.docx",
-      script: mockGenerateScript(
-        "직무교육(개발팀): 보안 코딩 기본 (JT-DEV-601)",
-        "직무"
-      ), // 스크립트는 있고
-      videoUrl: "", // 영상은 없음 → canVideoOnly=true
+      script: mockGenerateScript("직무교육(개발팀): 보안 코딩 기본 (JT-DEV-601)", "직무"),
+      videoUrl: "",
       thumbnailUrl: "",
     },
-    pipeline: defaultPipeline(), // 진행률 표시 대신 canVideoOnly 안내가 뜨게
+    pipeline: defaultPipeline(),
+    scriptApprovedAt: h(20),
   });
 
   // 법무팀 — 완전 초안(업로드 전)
@@ -329,7 +341,6 @@ export function createMockCreatorWorkItems(): CreatorWorkItem[] {
     jobTrainingId: "JT-LEG-801",
     templateId: "T003",
     targetDeptIds: ["D008"],
-    isMandatory: false,
     status: "DRAFT",
     createdAt: d(6),
     updatedAt: d(5),
@@ -345,18 +356,17 @@ export function createMockCreatorWorkItems(): CreatorWorkItem[] {
   /**
    * =========================
    * 2) REVIEW_PENDING (검토 대기)
-   * - 생성 완료(스크립트+영상) 후 검토요청 상태
+   * - 1차: 스크립트만 있고 영상은 없음
+   * - 2차: scriptApprovedAt 존재 + 영상 포함
    * =========================
    */
 
-  // 4대 의무교육(전사) — 성희롱 예방
+  // 1차(스크립트) — 4대 의무교육(전사) 성희롱 예방
   const item4 = createNewDraftItem({
-    title: "4대 의무교육: 성희롱 예방 (2026)",
+    title: "4대 의무교육: 성희롱 예방 (2026) — 1차(스크립트) 검토 요청",
     categoryId: "C002",
     categoryLabel: "성희롱 예방",
     templateId: "T001",
-    targetDeptIds: [],
-    isMandatory: true,
     status: "REVIEW_PENDING",
     createdAt: d(9),
     updatedAt: d(4),
@@ -364,21 +374,20 @@ export function createMockCreatorWorkItems(): CreatorWorkItem[] {
     assets: {
       sourceFileName: "mandatory_anti_harassment_2026.pptx",
       script: mockGenerateScript("4대 의무교육: 성희롱 예방 (2026)", "성희롱 예방"),
-      videoUrl: mockVideoUrl("mandatory-anti-harassment-2026"),
-      thumbnailUrl: "mock://thumbnail/mandatory-anti-harassment-2026",
+      videoUrl: "",
+      thumbnailUrl: "",
     },
-    pipeline: success(9, 120000),
+    pipeline: scriptOk(9, 45000),
   });
 
-  // 총무팀 직무교육 — 구매/비용 집행
+  // 1차(스크립트) — 총무팀 직무교육
   const item5 = createNewDraftItem({
-    title: "직무교육(총무팀): 구매/비용 집행 프로세스(품의~정산) (JT-ADM-101)",
+    title: "직무교육(총무팀): 구매/비용 집행 프로세스(품의~정산) (JT-ADM-101) — 1차(스크립트) 검토 요청",
     categoryId: "C001",
     categoryLabel: "직무",
     jobTrainingId: "JT-ADM-101",
     templateId: "T002",
     targetDeptIds: ["D001"],
-    isMandatory: false,
     status: "REVIEW_PENDING",
     createdAt: d(12),
     updatedAt: d(6),
@@ -389,78 +398,114 @@ export function createMockCreatorWorkItems(): CreatorWorkItem[] {
         "직무교육(총무팀): 구매/비용 집행 프로세스(품의~정산) (JT-ADM-101)",
         "직무"
       ),
-      videoUrl: mockVideoUrl("jt-adm-101"),
-      thumbnailUrl: "mock://thumbnail/jt-adm-101",
+      videoUrl: "",
+      thumbnailUrl: "",
     },
-    pipeline: success(12, 95000),
+    pipeline: scriptOk(12, 52000),
   });
 
-  // 마케팅팀 직무교육 — 캠페인 기획
+  // 2차(최종) — 마케팅팀 직무교육
   const item6 = createNewDraftItem({
-    title: "직무교육(마케팅팀): 캠페인 기획(목표/타겟/메시지) (JT-MKT-301)",
+    title: "직무교육(마케팅팀): 캠페인 기획(목표/타겟/메시지) (JT-MKT-301) — 2차(최종) 검토 요청",
     categoryId: "C001",
     categoryLabel: "직무",
     jobTrainingId: "JT-MKT-301",
     templateId: "T001",
     targetDeptIds: ["D003"],
-    isMandatory: false,
     status: "REVIEW_PENDING",
     createdAt: d(8),
     updatedAt: d(3),
     createdByName: "한지민(마케팅팀)",
     assets: {
       sourceFileName: "JT-MKT-301_campaign_planning.pptx",
-      script: mockGenerateScript(
-        "직무교육(마케팅팀): 캠페인 기획(목표/타겟/메시지) (JT-MKT-301)",
-        "직무"
-      ),
+      script: mockGenerateScript("직무교육(마케팅팀): 캠페인 기획(목표/타겟/메시지) (JT-MKT-301)", "직무"),
       videoUrl: mockVideoUrl("jt-mkt-301"),
       thumbnailUrl: "mock://thumbnail/jt-mkt-301",
     },
     pipeline: success(8, 110000),
+    scriptApprovedAt: h(72),
   });
 
-  // 공통 직무(전사) — 문서 작성/보고 체계
+  // 2차(최종) — 공통 직무(전사)
   const item7 = createNewDraftItem({
-    title: "직무교육(공통): 사내 문서 작성/보고 체계(템플릿/결재) (JT-COM-002)",
+    title: "직무교육(공통): 사내 문서 작성/보고 체계(템플릿/결재) (JT-COM-002) — 2차(최종) 검토 요청",
     categoryId: "C001",
     categoryLabel: "직무",
     jobTrainingId: "JT-COM-002",
     templateId: "T002",
     targetDeptIds: [],
-    isMandatory: false,
     status: "REVIEW_PENDING",
     createdAt: d(20),
     updatedAt: d(13),
     createdByName: "이서준(기획팀)",
     assets: {
       sourceFileName: "JT-COM-002_reporting_template_guides.pdf",
-      script: mockGenerateScript(
-        "직무교육(공통): 사내 문서 작성/보고 체계(템플릿/결재) (JT-COM-002)",
-        "직무"
-      ),
+      script: mockGenerateScript("직무교육(공통): 사내 문서 작성/보고 체계(템플릿/결재) (JT-COM-002)", "직무"),
       videoUrl: mockVideoUrl("jt-com-002"),
       thumbnailUrl: "mock://thumbnail/jt-com-002",
     },
     pipeline: success(20, 85000),
+    scriptApprovedAt: h(240),
+  });
+
+  // 추가 1차(스크립트) — 개발팀 코드리뷰
+  const item16 = createNewDraftItem({
+    title: "직무교육(개발팀): 코드리뷰/브랜치 전략(Git Flow) (JT-DEV-602) — 1차(스크립트) 검토 요청",
+    categoryId: "C001",
+    categoryLabel: "직무",
+    jobTrainingId: "JT-DEV-602",
+    templateId: "T003",
+    targetDeptIds: ["D006"],
+    status: "REVIEW_PENDING",
+    createdAt: d(5),
+    updatedAt: d(2),
+    createdByName: "김지훈(개발팀)",
+    assets: {
+      sourceFileName: "JT-DEV-602_git_flow_guideline.md",
+      script: mockGenerateScript("직무교육(개발팀): 코드리뷰/브랜치 전략(Git Flow) (JT-DEV-602)", "직무"),
+      videoUrl: "",
+      thumbnailUrl: "",
+    },
+    pipeline: scriptOk(5, 38000),
+  });
+
+  // 추가 2차(최종) — 재무팀 내부통제
+  const item17 = createNewDraftItem({
+    title: "직무교육(재무팀): 내부통제(승인/증빙/감사 대응) (JT-FIN-504) — 2차(최종) 검토 요청",
+    categoryId: "C001",
+    categoryLabel: "직무",
+    jobTrainingId: "JT-FIN-504",
+    templateId: "T002",
+    targetDeptIds: ["D005"],
+    status: "REVIEW_PENDING",
+    createdAt: d(14),
+    updatedAt: d(7),
+    createdByName: "윤서아(재무팀)",
+    assets: {
+      sourceFileName: "JT-FIN-504_internal_control.pdf",
+      script: mockGenerateScript("직무교육(재무팀): 내부통제(승인/증빙/감사 대응) (JT-FIN-504)", "직무"),
+      videoUrl: mockVideoUrl("jt-fin-504"),
+      thumbnailUrl: "mock://thumbnail/jt-fin-504",
+    },
+    pipeline: success(14, 98000),
+    scriptApprovedAt: h(168),
   });
 
   /**
    * =========================
    * 3) REJECTED (반려)
-   * - 검토자가 코멘트를 남겼고, 제작자가 수정 후 재요청해야 하는 케이스
+   * - 1차/2차 반려가 섞이도록 구성
    * =========================
    */
 
-  // 인사팀 — 평가/보상
+  // 2차 반려 — 인사팀 평가/보상
   const item8 = createNewDraftItem({
-    title: "직무교육(인사팀): 평가/보상 프로세스(캘리브레이션) (JT-HR-402)",
+    title: "직무교육(인사팀): 평가/보상 프로세스(캘리브레이션) (JT-HR-402) — 2차(최종) 반려",
     categoryId: "C001",
     categoryLabel: "직무",
     jobTrainingId: "JT-HR-402",
     templateId: "T001",
     targetDeptIds: ["D004"],
-    isMandatory: false,
     status: "REJECTED",
     createdAt: d(18),
     updatedAt: d(9),
@@ -469,51 +514,43 @@ export function createMockCreatorWorkItems(): CreatorWorkItem[] {
       "평가 등급 산정 기준이 부서별로 다르게 해석될 수 있습니다. 용어 정의(등급/캘리브레이션)를 먼저 정리하고, 사례는 일반화된 표현으로 수정해주세요.",
     assets: {
       sourceFileName: "JT-HR-402_performance_compensation.pdf",
-      script: mockGenerateScript(
-        "직무교육(인사팀): 평가/보상 프로세스(캘리브레이션) (JT-HR-402)",
-        "직무"
-      ),
+      script: mockGenerateScript("직무교육(인사팀): 평가/보상 프로세스(캘리브레이션) (JT-HR-402)", "직무"),
       videoUrl: mockVideoUrl("jt-hr-402"),
       thumbnailUrl: "mock://thumbnail/jt-hr-402",
     },
     pipeline: success(18, 98000),
+    scriptApprovedAt: h(220),
   });
 
-  // 4대 의무교육(전사) — 직장 내 괴롭힘 예방
+  // 1차 반려 — 4대 의무교육(전사) 직장 내 괴롭힘(스크립트만)
   const item9 = createNewDraftItem({
-    title: "4대 의무교육: 직장 내 괴롭힘 예방 (2026)",
+    title: "4대 의무교육: 직장 내 괴롭힘 예방 (2026) — 1차(스크립트) 반려",
     categoryId: "C004",
     categoryLabel: "직장 내 괴롭힘",
     templateId: "T002",
-    targetDeptIds: [],
-    isMandatory: true,
     status: "REJECTED",
     createdAt: d(25),
     updatedAt: d(15),
     createdByName: "최유나(인사팀)",
     rejectedComment:
-      "사례 문장이 실제 사건으로 오해될 수 있습니다. 케이스를 익명화/일반화하고, 신고/대응 절차를 단계별 체크리스트로 보강해주세요.",
+      "사례 문장이 실제 사건으로 오해될 수 있습니다. 케이스를 익명화/일반화하고, 신고/대응 절차를 체크리스트로 보강해주세요.",
     assets: {
       sourceFileName: "mandatory_workplace_bullying_2026.pptx",
-      script: mockGenerateScript(
-        "4대 의무교육: 직장 내 괴롭힘 예방 (2026)",
-        "직장 내 괴롭힘"
-      ),
-      videoUrl: mockVideoUrl("mandatory-bullying-2026"),
-      thumbnailUrl: "mock://thumbnail/mandatory-bullying-2026",
+      script: mockGenerateScript("4대 의무교육: 직장 내 괴롭힘 예방 (2026)", "직장 내 괴롭힘"),
+      videoUrl: "",
+      thumbnailUrl: "",
     },
-    pipeline: success(25, 130000),
+    pipeline: scriptOk(25, 60000, "스크립트 생성 완료(반려됨)"),
   });
 
-  // 기획팀 — KPI/지표 설계
+  // 2차 반려 — 기획팀 KPI/지표 설계
   const item10 = createNewDraftItem({
-    title: "직무교육(기획팀): KPI/지표 설계(정의/수집/대시보드) (JT-PLN-202)",
+    title: "직무교육(기획팀): KPI/지표 설계(정의/수집/대시보드) (JT-PLN-202) — 2차(최종) 반려",
     categoryId: "C001",
     categoryLabel: "직무",
     jobTrainingId: "JT-PLN-202",
     templateId: "T003",
     targetDeptIds: ["D002"],
-    isMandatory: false,
     status: "REJECTED",
     createdAt: d(16),
     updatedAt: d(8),
@@ -522,45 +559,38 @@ export function createMockCreatorWorkItems(): CreatorWorkItem[] {
       "지표 정의가 추상적입니다. 예시 KPI 3개(정의/수식/수집 위치)를 표로 추가하고, '좋은 지표 vs 나쁜 지표' 비교를 넣어주세요.",
     assets: {
       sourceFileName: "JT-PLN-202_kpi_metric_design.pptx",
-      script: mockGenerateScript(
-        "직무교육(기획팀): KPI/지표 설계(정의/수집/대시보드) (JT-PLN-202)",
-        "직무"
-      ),
+      script: mockGenerateScript("직무교육(기획팀): KPI/지표 설계(정의/수집/대시보드) (JT-PLN-202)", "직무"),
       videoUrl: mockVideoUrl("jt-pln-202"),
       thumbnailUrl: "mock://thumbnail/jt-pln-202",
     },
     pipeline: success(16, 105000),
+    scriptApprovedAt: h(190),
   });
 
   /**
    * =========================
    * 4) APPROVED (승인/게시)
-   * - 검토 승인 완료, 게시 상태
    * =========================
    */
 
-  // 4대 의무교육(전사) — 개인정보 보호(온보딩)
+  // 4대 의무교육(전사) — 개인정보 보호
   const item11 = createNewDraftItem({
     title: "4대 의무교육: 개인정보 보호(신규 입사자 온보딩) (2025)",
     categoryId: "C003",
     categoryLabel: "개인 정보 보호",
     templateId: "T001",
-    targetDeptIds: [],
-    isMandatory: true,
     status: "APPROVED",
     createdAt: d(40),
     updatedAt: d(22),
     createdByName: "박도윤(법무팀)",
     assets: {
       sourceFileName: "mandatory_privacy_onboarding_2025.pdf",
-      script: mockGenerateScript(
-        "4대 의무교육: 개인정보 보호(신규 입사자 온보딩) (2025)",
-        "개인 정보 보호"
-      ),
+      script: mockGenerateScript("4대 의무교육: 개인정보 보호(신규 입사자 온보딩) (2025)", "개인 정보 보호"),
       videoUrl: mockVideoUrl("mandatory-privacy-onboarding-2025"),
       thumbnailUrl: "mock://thumbnail/mandatory-privacy-onboarding-2025",
     },
     pipeline: success(40, 150000),
+    scriptApprovedAt: h(520),
   });
 
   // 재무팀 — 월말 마감
@@ -571,21 +601,18 @@ export function createMockCreatorWorkItems(): CreatorWorkItem[] {
     jobTrainingId: "JT-FIN-502",
     templateId: "T002",
     targetDeptIds: ["D005"],
-    isMandatory: false,
     status: "APPROVED",
     createdAt: d(33),
     updatedAt: d(26),
     createdByName: "윤서아(재무팀)",
     assets: {
       sourceFileName: "JT-FIN-502_month_end_closing.pdf",
-      script: mockGenerateScript(
-        "직무교육(재무팀): 월말 마감(전표/계정 과목) 기본 (JT-FIN-502)",
-        "직무"
-      ),
+      script: mockGenerateScript("직무교육(재무팀): 월말 마감(전표/계정 과목) 기본 (JT-FIN-502)", "직무"),
       videoUrl: mockVideoUrl("jt-fin-502"),
       thumbnailUrl: "mock://thumbnail/jt-fin-502",
     },
     pipeline: success(33, 140000),
+    scriptApprovedAt: h(420),
   });
 
   // 개발팀 — API 설계
@@ -596,27 +623,23 @@ export function createMockCreatorWorkItems(): CreatorWorkItem[] {
     jobTrainingId: "JT-DEV-603",
     templateId: "T003",
     targetDeptIds: ["D006", "D002"], // 개발+기획 같이 듣는 케이스
-    isMandatory: false,
     status: "APPROVED",
     createdAt: d(28),
     updatedAt: d(21),
     createdByName: "김지훈(개발팀)",
     assets: {
       sourceFileName: "JT-DEV-603_api_contract_guideline.pptx",
-      script: mockGenerateScript(
-        "직무교육(개발팀): API 설계(버저닝/에러모델/계약) (JT-DEV-603)",
-        "직무"
-      ),
+      script: mockGenerateScript("직무교육(개발팀): API 설계(버저닝/에러모델/계약) (JT-DEV-603)", "직무"),
       videoUrl: mockVideoUrl("jt-dev-603"),
       thumbnailUrl: "mock://thumbnail/jt-dev-603",
     },
     pipeline: success(28, 125000),
+    scriptApprovedAt: h(360),
   });
 
   /**
    * =========================
    * 5) FAILED (실패)
-   * - TTS/변환/합성 등 실패 케이스(재시도 UX 확인)
    * =========================
    */
 
@@ -628,7 +651,6 @@ export function createMockCreatorWorkItems(): CreatorWorkItem[] {
     jobTrainingId: "JT-SAL-704",
     templateId: "T001",
     targetDeptIds: ["D007"],
-    isMandatory: false,
     status: "FAILED",
     createdAt: d(7),
     updatedAt: d(2),
@@ -649,8 +671,6 @@ export function createMockCreatorWorkItems(): CreatorWorkItem[] {
     categoryId: "C005",
     categoryLabel: "장애인 인식 개선",
     templateId: "T002",
-    targetDeptIds: [],
-    isMandatory: true,
     status: "FAILED",
     createdAt: d(11),
     updatedAt: d(5),
@@ -671,13 +691,15 @@ export function createMockCreatorWorkItems(): CreatorWorkItem[] {
     item2,
     item3,
 
-    // review_pending
+    // review_pending (1차/2차 섞임)
     item4,
     item5,
     item6,
     item7,
+    item16,
+    item17,
 
-    // rejected
+    // rejected (1차/2차 섞임)
     item8,
     item9,
     item10,

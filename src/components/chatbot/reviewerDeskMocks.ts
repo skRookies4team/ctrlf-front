@@ -4,6 +4,9 @@ import type { AuditAction, ReviewStatus, ReviewWorkItem } from "./reviewerDeskTy
 const FALLBACK_VIDEO_URL =
   "https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4";
 
+// 1차(스크립트 검토) 케이스를 “videoUrl이 비어있는 VIDEO”로 표현 (UI가 videoUrl 존재 여부로 1/2차를 나누는 경우 대응)
+const SCRIPT_ONLY_VIDEO_URL = "";
+
 // 한국어 날짜/시간 포맷 (YYYY.MM.DD HH:mm)
 export function formatDateTime(iso: string): string {
   const d = new Date(iso);
@@ -27,7 +30,7 @@ function mulberry32(seed: number) {
   let a = seed >>> 0;
   return () => {
     a |= 0;
-    a = (a + 0x6D2B79F5) | 0;
+    a = (a + 0x6d2b79f5) | 0;
     let t = Math.imul(a ^ (a >>> 15), 1 | a);
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
@@ -82,7 +85,7 @@ export interface CreateMockOptions {
 export function createMockReviewWorkItems(opts: CreateMockOptions = {}): ReviewWorkItem[] {
   const {
     preset = "base",
-    total = preset === "load" ? 800 : 120,
+    total = preset === "load" ? 800 : 140, // base 데모는 “좀 더 풍부하게”
     reviewerName = "Reviewer",
     seed = preset === "load" ? 23 : 7,
     now = new Date().toISOString(),
@@ -91,13 +94,18 @@ export function createMockReviewWorkItems(opts: CreateMockOptions = {}): ReviewW
   const baseDate = new Date(now);
   const rng = mulberry32(seed);
 
-  // base 시나리오 상단 고정(기존 5개 유사)
+  /**
+   * base 시나리오 상단 고정
+   * - 1차(스크립트 검토): VIDEO이지만 videoUrl = "" / durationSec=0
+   * - 2차(최종 검토): VIDEO + videoUrl 존재
+   */
   const fixed: ReviewWorkItem[] =
     preset === "base"
       ? [
+          // ===== 2차(최종 검토) =====
           {
             id: "rev-1001",
-            title: "개인정보보호 기본 교육 - 2026 개정 반영",
+            title: "개인정보보호 기본 교육 - 2026 개정 반영 (2차 최종 검토)",
             department: "인사팀",
             creatorName: "김제작",
             contentType: "VIDEO",
@@ -127,7 +135,7 @@ export function createMockReviewWorkItems(opts: CreateMockOptions = {}): ReviewW
           },
           {
             id: "rev-1002",
-            title: "신입사원 온보딩 - 문서 보안 기본",
+            title: "신입사원 온보딩 - 문서 보안 기본 (2차 최종 검토)",
             department: "총무팀",
             creatorName: "이제작",
             contentType: "VIDEO",
@@ -150,6 +158,8 @@ export function createMockReviewWorkItems(opts: CreateMockOptions = {}): ReviewW
             lastUpdatedAt: isoHoursAgo(baseDate, 10),
             sourceSystem: "VIDEO_PIPELINE",
           },
+
+          // ===== 문서(정책) =====
           {
             id: "rev-1003",
             title: "사규: 출장비 정산 규정 v3",
@@ -181,9 +191,11 @@ export function createMockReviewWorkItems(opts: CreateMockOptions = {}): ReviewW
             lastUpdatedAt: isoDaysAgo(baseDate, 2),
             sourceSystem: "POLICY_PIPELINE",
           },
+
+          // ===== 2차 반려 케이스 =====
           {
             id: "rev-1004",
-            title: "직장 내 괴롭힘 예방 - 사례 중심",
+            title: "직장 내 괴롭힘 예방 - 사례 중심 (2차 최종 검토)",
             department: "인사팀",
             creatorName: "최제작",
             contentType: "VIDEO",
@@ -213,9 +225,11 @@ export function createMockReviewWorkItems(opts: CreateMockOptions = {}): ReviewW
             lastUpdatedAt: isoDaysAgo(baseDate, 5),
             sourceSystem: "VIDEO_PIPELINE",
           },
+
+          // ===== 1차(스크립트 검토) =====
           {
             id: "rev-1005",
-            title: "장애인 인식 개선 - 기본",
+            title: "장애인 인식 개선 - 기본 (1차 스크립트 검토)",
             department: "ESG팀",
             creatorName: "정제작",
             contentType: "VIDEO",
@@ -223,17 +237,57 @@ export function createMockReviewWorkItems(opts: CreateMockOptions = {}): ReviewW
             createdAt: isoDaysAgo(baseDate, 3),
             submittedAt: isoDaysAgo(baseDate, 2),
             status: "REVIEW_PENDING",
-            videoUrl: FALLBACK_VIDEO_URL,
-            durationSec: 600,
-            scriptText: "장애 인식 개선 교육 스크립트(요약)...",
-            autoCheck: { piiRiskLevel: "none", piiFindings: [], bannedWords: [], qualityWarnings: ["퀴즈 연결(quizId) 누락 가능"] },
+            videoUrl: SCRIPT_ONLY_VIDEO_URL,
+            durationSec: 0,
+            scriptText:
+              "[오프닝] 안녕하세요. 오늘은 장애 인식 개선 교육입니다.\n[본론] 올바른 용어와 배려 원칙을 사례로 설명합니다.\n[마무리] 교육 후 퀴즈를 진행하세요.",
+            autoCheck: {
+              piiRiskLevel: "none",
+              piiFindings: [],
+              bannedWords: [],
+              qualityWarnings: ["(1차) 영상은 승인 후 생성됩니다.", "퀴즈 연결(quizId) 누락 가능"],
+            },
             audit: [
               audit("CREATED", "정제작", isoDaysAgo(baseDate, 3)),
               audit("AUTO_CHECKED", "SYSTEM", isoDaysAgo(baseDate, 2)),
-              audit("SUBMITTED", "정제작", isoDaysAgo(baseDate, 2)),
+              audit("SUBMITTED", "정제작", isoDaysAgo(baseDate, 2), "1차 스크립트 검토 요청"),
             ],
             version: 1,
             riskScore: 24,
+            lastUpdatedAt: isoDaysAgo(baseDate, 2),
+            sourceSystem: "VIDEO_PIPELINE",
+          },
+
+          // 1차 반려 케이스
+          {
+            id: "rev-1006",
+            title: "정보보안 기본 - 접근권한/로그 관리 (1차 스크립트 검토)",
+            department: "보안팀",
+            creatorName: "윤제작",
+            contentType: "VIDEO",
+            contentCategory: "JOB",
+            createdAt: isoDaysAgo(baseDate, 4),
+            submittedAt: isoDaysAgo(baseDate, 3),
+            status: "REJECTED",
+            rejectedAt: isoDaysAgo(baseDate, 2),
+            videoUrl: SCRIPT_ONLY_VIDEO_URL,
+            durationSec: 0,
+            scriptText:
+              "[오프닝] 정보보안 기본 원칙을 안내합니다.\n[본론] 권한 최소화, 로그 접근 절차, 외부 반출 금지.\n[주의] 실제 시스템 화면/식별자 노출에 주의.\n[마무리] 체크리스트로 복습하세요.",
+            autoCheck: {
+              piiRiskLevel: "low",
+              piiFindings: [],
+              bannedWords: ["비밀번호"],
+              qualityWarnings: ["예시 화면/식별자 처리 기준을 더 구체화하세요."],
+            },
+            audit: [
+              audit("CREATED", "윤제작", isoDaysAgo(baseDate, 4)),
+              audit("AUTO_CHECKED", "SYSTEM", isoDaysAgo(baseDate, 3), "PII/금칙어 점검"),
+              audit("SUBMITTED", "윤제작", isoDaysAgo(baseDate, 3), "1차 스크립트 검토 요청"),
+              audit("REJECTED", reviewerName, isoDaysAgo(baseDate, 2), "권한/식별자 예시 표현을 일반화 필요"),
+            ],
+            version: 2,
+            riskScore: 44,
             lastUpdatedAt: isoDaysAgo(baseDate, 2),
             sourceSystem: "VIDEO_PIPELINE",
           },
@@ -257,6 +311,7 @@ export function createMockReviewWorkItems(opts: CreateMockOptions = {}): ReviewW
     "자막 타이밍 점검 필요",
     "퀴즈 연결(quizId) 누락 가능",
     "규정 조문 번호 표기 형식 점검 필요",
+    "(1차) 영상은 승인 후 생성됩니다.",
   ];
 
   const makeTitle = (idx: number, ct: ReviewWorkItem["contentType"], cc: ReviewWorkItem["contentCategory"]) => {
@@ -290,7 +345,7 @@ export function createMockReviewWorkItems(opts: CreateMockOptions = {}): ReviewW
     return lines.join("\n");
   };
 
-  const makeAutoCheck = (riskScore: number) => {
+  const makeAutoCheck = (riskScore: number, isStage1ScriptOnly: boolean) => {
     const piiLevel: ReviewWorkItem["autoCheck"]["piiRiskLevel"] =
       riskScore >= 85 ? "high" : riskScore >= 60 ? "medium" : riskScore >= 25 ? "low" : "none";
 
@@ -306,8 +361,10 @@ export function createMockReviewWorkItems(opts: CreateMockOptions = {}): ReviewW
           : []
         : [];
 
-    const qualityWarnings =
-      chance(rng, 0.35) ? [pick(rng, qualityPool)] : [];
+    const qualityWarningsBase = chance(rng, 0.35) ? [pick(rng, qualityPool)] : [];
+    const qualityWarnings = isStage1ScriptOnly
+      ? Array.from(new Set(["(1차) 영상은 승인 후 생성됩니다.", ...qualityWarningsBase]))
+      : qualityWarningsBase;
 
     return { piiRiskLevel: piiLevel, piiFindings, bannedWords, qualityWarnings };
   };
@@ -316,7 +373,7 @@ export function createMockReviewWorkItems(opts: CreateMockOptions = {}): ReviewW
     // 분포: pending 45 / approved 35 / rejected 20
     const r = rng();
     if (r < 0.45) return "REVIEW_PENDING" as const;
-    if (r < 0.80) return "APPROVED" as const;
+    if (r < 0.8) return "APPROVED" as const;
     return "REJECTED" as const;
   };
 
@@ -332,8 +389,11 @@ export function createMockReviewWorkItems(opts: CreateMockOptions = {}): ReviewW
     const submittedAt = isoHoursAgo(baseDate, 6 + Math.floor(rng() * 24 * 12)); // ~12일 내
     const version = 1 + Math.floor(rng() * 6);
 
+    // VIDEO일 때 “1차(스크립트만)” 섞기
+    const isStage1ScriptOnly = contentType === "VIDEO" ? chance(rng, preset === "load" ? 0.25 : 0.35) : false;
+
     const riskScore = Math.round(rng() * 100);
-    const autoCheck = makeAutoCheck(riskScore);
+    const autoCheck = makeAutoCheck(riskScore, isStage1ScriptOnly);
 
     const id = `rev-${preset === "load" ? 3000 + idx : 1200 + idx}`;
 
@@ -344,7 +404,7 @@ export function createMockReviewWorkItems(opts: CreateMockOptions = {}): ReviewW
     const auditTrail: ReviewWorkItem["audit"] = [
       audit("CREATED", creatorName, createdAt),
       audit("AUTO_CHECKED", "SYSTEM", submittedAt, "PII/금칙어/품질 점검"),
-      audit("SUBMITTED", creatorName, submittedAt, "검토 요청"),
+      audit("SUBMITTED", creatorName, submittedAt, isStage1ScriptOnly ? "1차 스크립트 검토 요청" : "검토 요청"),
     ];
 
     let approvedAt: string | undefined;
@@ -388,10 +448,16 @@ export function createMockReviewWorkItems(opts: CreateMockOptions = {}): ReviewW
     };
 
     if (contentType === "VIDEO") {
+      const videoUrl = isStage1ScriptOnly
+        ? SCRIPT_ONLY_VIDEO_URL
+        : chance(rng, 0.15)
+        ? "/videos/test1.mp4"
+        : FALLBACK_VIDEO_URL;
+
       return {
         ...common,
-        videoUrl: chance(rng, 0.15) ? "/videos/test1.mp4" : FALLBACK_VIDEO_URL,
-        durationSec: 240 + Math.floor(rng() * 1200),
+        videoUrl,
+        durationSec: isStage1ScriptOnly ? 0 : 240 + Math.floor(rng() * 1200),
         scriptText: makeScript(idx, riskScore),
       };
     }

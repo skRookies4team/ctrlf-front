@@ -2,7 +2,11 @@
 import type { ReviewWorkItem } from "./reviewerDeskTypes";
 
 export type ReviewerSortMode = "NEWEST" | "OLDEST" | "DUE_SOON" | "RISK_HIGH";
-export type ReviewerTabKey = "REVIEW_PENDING" | "REJECTED" | "APPROVED" | "MY_ACTIVITY";
+export type ReviewerTabKey =
+  | "REVIEW_PENDING"
+  | "REJECTED"
+  | "APPROVED"
+  | "MY_ACTIVITY";
 
 export interface ReviewListParams {
   tab: ReviewerTabKey;
@@ -42,7 +46,10 @@ export interface DecisionResponse {
  * 409 충돌 payload 권장 형태
  * - code로 충돌 원인을 명확하게 내려주면 프론트 UX가 안정된다.
  */
-export type ConflictCode = "LOCK_CONFLICT" | "VERSION_CONFLICT" | "ALREADY_PROCESSED";
+export type ConflictCode =
+  | "LOCK_CONFLICT"
+  | "VERSION_CONFLICT"
+  | "ALREADY_PROCESSED";
 
 export interface ConflictPayload {
   code: ConflictCode;

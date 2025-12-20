@@ -1,7 +1,7 @@
 // src/components/chatbot/ReviewerQueue.tsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { ReviewWorkItem } from "./reviewerDeskTypes";
-import type { ListMode, ReviewerTabId, SortMode } from "./useReviewerDeskController";
+import type { ListMode, ReviewerTabId, SortMode, ReviewStageFilter } from "./useReviewerDeskController";
 import { formatDateTime } from "./reviewerDeskMocks";
 
 function cx(...tokens: Array<string | false | null | undefined>) {
@@ -43,6 +43,19 @@ function categoryLabel(c: ReviewWorkItem["contentCategory"]) {
     }
 }
 
+function getVideoStage(it: ReviewWorkItem): 1 | 2 | null {
+    if (it.contentType !== "VIDEO") return null;
+    return it.videoUrl?.trim() ? 2 : 1;
+}
+
+function stageLabelShort(stage: 1 | 2) {
+    return stage === 2 ? "2차" : "1차";
+}
+
+function stageLabelLong(stage: 1 | 2) {
+    return stage === 2 ? "2차(최종)" : "1차(스크립트)";
+}
+
 function renderStatusPill(s: ReviewWorkItem["status"]) {
     const tone = statusTone(s);
     return <span className={cx("cb-reviewer-pill", `cb-reviewer-pill--${tone}`)}>{statusLabel(s)}</span>;
@@ -66,10 +79,30 @@ function renderPiiPill(item: ReviewWorkItem["autoCheck"]) {
     return <span className={cx("cb-reviewer-pill", `cb-reviewer-pill--${tone}`)}>{label}</span>;
 }
 
+function renderStagePill(stage: 1 | 2) {
+    return (
+        <span
+            className={cx("cb-reviewer-pill", "cb-reviewer-pill--neutral")}
+            title={stageLabelLong(stage)}
+        >
+            {stageLabelShort(stage)}
+        </span>
+    );
+}
+
+function renderDocPill(it: ReviewWorkItem) {
+    if (it.contentType === "VIDEO") return null;
+    return (
+        <span className={cx("cb-reviewer-pill", "cb-reviewer-pill--neutral")} title="문서/정책">
+            문서
+        </span>
+    );
+}
+
 function isRiskItem(it: ReviewWorkItem) {
-    const pii = it.autoCheck.piiRiskLevel;
-    const banned = it.autoCheck.bannedWords?.length ?? 0;
-    const qwarn = it.autoCheck.qualityWarnings?.length ?? 0;
+    const pii = it.autoCheck?.piiRiskLevel;
+    const banned = it.autoCheck?.bannedWords?.length ?? 0;
+    const qwarn = it.autoCheck?.qualityWarnings?.length ?? 0;
     return pii === "high" || pii === "medium" || banned > 0 || qwarn > 0;
 }
 
@@ -111,13 +144,17 @@ export interface ReviewerQueueProps {
     totalPages: number;
 
     pageItems: ReviewWorkItem[];
+
+    stageFilter: ReviewStageFilter;
+    setStageFilter: (v: ReviewStageFilter) => void;
+    stageCounts: { all: number; stage1: number; stage2: number; docs: number };
 }
 
 const ROW_STEP = 122; // item height + gap (가상 스크롤 기준)
 const OVERSCAN = 6;
 const VIRTUAL_GAP = 10; // 기존 .cb-reviewer-item margin-bottom 값(가상 스크롤에서는 gap을 ROW_STEP로 만들 것)
 const VIRTUAL_ITEM_HEIGHT = ROW_STEP - VIRTUAL_GAP; // 112
-const MAX_PILLS_VIRTUAL = 4; // 가상 스크롤에서는 1줄 유지 위해 최대 N개만
+const MAX_PILLS_VIRTUAL = 4; // 가상 스크롤에서는 1줄 유지 위해 최대 N개만 (+N 표시)
 
 const ReviewerQueue: React.FC<ReviewerQueueProps> = (props) => {
     const {
@@ -147,12 +184,14 @@ const ReviewerQueue: React.FC<ReviewerQueueProps> = (props) => {
         setPageSize,
         totalPages,
         pageItems,
+        stageFilter,
+        setStageFilter,
+        stageCounts,
     } = props;
 
     const isVirtual = listMode === "virtual";
     const listRef = useRef<HTMLDivElement | null>(null);
     const [scrollTop, setScrollTop] = useState(0);
-
     const [viewportH, setViewportH] = useState(560);
 
     useEffect(() => {
@@ -163,7 +202,6 @@ const ReviewerQueue: React.FC<ReviewerQueueProps> = (props) => {
         const update = () => setViewportH(root.clientHeight || 560);
         update();
 
-        // ResizeObserver가 없는 환경 방어
         if (typeof ResizeObserver === "undefined") return;
 
         const ro = new ResizeObserver(() => update());
@@ -174,9 +212,16 @@ const ReviewerQueue: React.FC<ReviewerQueueProps> = (props) => {
     const queueEmptyLabel = useMemo(() => {
         if (query.trim()) return "검색 조건에 해당하는 항목이 없습니다.";
         if (riskOnly) return "리스크 조건에 해당하는 항목이 없습니다.";
+        if (stageFilter !== "all") {
+            const label =
+                stageFilter === "stage1" ? "1차" :
+                    stageFilter === "stage2" ? "2차" :
+                        "문서";
+            return `${label} 조건에 해당하는 항목이 없습니다.`;
+        }
         if (activeTab === "my") return "내 활동 내역이 없습니다.";
         return "현재 큐가 비어있습니다.";
-    }, [activeTab, query, riskOnly]);
+    }, [activeTab, query, riskOnly, stageFilter]);
 
     // selection visible
     useEffect(() => {
@@ -208,16 +253,14 @@ const ReviewerQueue: React.FC<ReviewerQueueProps> = (props) => {
         const totalHeight = total * ROW_STEP + 12;
 
         const start = Math.max(0, Math.floor(scrollTop / ROW_STEP) - OVERSCAN);
-        const end = Math.min(
-            total,
-            Math.ceil((scrollTop + viewportH) / ROW_STEP) + OVERSCAN
-        );
+        const end = Math.min(total, Math.ceil((scrollTop + viewportH) / ROW_STEP) + OVERSCAN);
 
         const slice = filtered.slice(start, end);
 
         return { total, totalHeight, start, end, slice };
     }, [filtered, isVirtual, scrollTop, viewportH]);
 
+    // virtual: scrollTop clamp (effect 내 동기 setState 금지 패턴 반영)
     useEffect(() => {
         if (!isVirtual) return;
         const root = listRef.current;
@@ -227,10 +270,7 @@ const ReviewerQueue: React.FC<ReviewerQueueProps> = (props) => {
         const max = Math.max(0, totalHeight - viewportH);
 
         if (root.scrollTop > max) {
-            // DOM만 동기화 (외부 시스템)
             root.scrollTop = max;
-
-            // 상태는 다음 프레임에 "읽어서" 맞춤 (직접 setState를 effect에서 동기 호출하지 않음)
             requestAnimationFrame(() => {
                 const r = listRef.current;
                 if (!r) return;
@@ -288,7 +328,10 @@ const ReviewerQueue: React.FC<ReviewerQueueProps> = (props) => {
                         placeholder="제목/부서/제작자 검색 ( / 로 포커스 )"
                         disabled={isOverlayOpen || isBusy}
                     />
-                    <label className="cb-reviewer-toggle" title={onlyMineDisabled ? "검토 대기 탭에서는 적용되지 않습니다." : undefined}>
+                    <label
+                        className="cb-reviewer-toggle"
+                        title={onlyMineDisabled ? "검토 대기 탭에서는 적용되지 않습니다." : undefined}
+                    >
                         <input
                             type="checkbox"
                             checked={onlyMine}
@@ -335,6 +378,50 @@ const ReviewerQueue: React.FC<ReviewerQueueProps> = (props) => {
                             {isVirtual ? "가상 스크롤" : "페이지"}
                         </button>
                     </div>
+                    {stageCounts.all > 0 && (
+                        <div className="cb-reviewer-stage">
+                            <div className="cb-reviewer-stage-pills">
+                                <button
+                                    type="button"
+                                    className={cx("cb-reviewer-stage-pill", stageFilter === "all" && "cb-reviewer-stage-pill--active")}
+                                    onClick={() => setStageFilter("all")}
+                                    disabled={isOverlayOpen || isBusy}
+                                >
+                                    전체 <span className="cb-reviewer-stage-count">{stageCounts.all}</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    className={cx("cb-reviewer-stage-pill", stageFilter === "stage1" && "cb-reviewer-stage-pill--active")}
+                                    onClick={() => setStageFilter("stage1")}
+                                    disabled={isOverlayOpen || isBusy}
+                                    title="VIDEO 1차(스크립트) 단계"
+                                >
+                                    1차 <span className="cb-reviewer-stage-count">{stageCounts.stage1}</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    className={cx("cb-reviewer-stage-pill", stageFilter === "stage2" && "cb-reviewer-stage-pill--active")}
+                                    onClick={() => setStageFilter("stage2")}
+                                    disabled={isOverlayOpen || isBusy}
+                                    title="VIDEO 2차(최종) 단계"
+                                >
+                                    2차 <span className="cb-reviewer-stage-count">{stageCounts.stage2}</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    className={cx(
+                                        "cb-reviewer-stage-pill",
+                                        stageFilter === "docs" && "cb-reviewer-stage-pill--active"
+                                    )}
+                                    onClick={() => setStageFilter("docs")}
+                                    disabled={isOverlayOpen || isBusy || stageCounts.docs === 0}
+                                    title="VIDEO가 아닌 문서/정책"
+                                >
+                                    문서 <span className="cb-reviewer-stage-count">{stageCounts.docs}</span>
+                                </button>
+                            </div>
+                        </div>
+                    )}
 
                     <div className="cb-reviewer-hotkeys">↑↓ 이동 · Enter 미리보기 · / 검색</div>
                 </div>
@@ -345,6 +432,7 @@ const ReviewerQueue: React.FC<ReviewerQueueProps> = (props) => {
                 className={cx("cb-reviewer-list", isVirtual && "cb-reviewer-list--virtual")}
                 role="listbox"
                 aria-label="검토 항목 목록"
+                aria-activedescendant={selectedId ? `${uid}-item-${selectedId}` : undefined}
                 onScroll={isVirtual ? onScroll : undefined}
             >
                 {displayed.length === 0 ? (
@@ -355,37 +443,35 @@ const ReviewerQueue: React.FC<ReviewerQueueProps> = (props) => {
                             const index = virtualWindow.start + i;
                             const isActive = it.id === selectedId;
 
-                            // (3) 옵셔널 방어: bannedWords가 undefined여도 안전
-                            const bannedCnt = it.autoCheck.bannedWords?.length ?? 0;
-
-                            // (4) 리스크 표시 기준 통일: isRiskItem 로직을 그대로 사용
+                            const bannedCnt = it.autoCheck?.bannedWords?.length ?? 0;
                             const riskWarn = isRiskItem(it);
 
-                            const pills: React.ReactNode[] = [
+                            const stage = getVideoStage(it);
+
+                            const pillsRaw: Array<React.ReactNode | null> = [
                                 renderStatusPill(it.status),
                                 renderCategoryPill(it.contentCategory),
                                 renderPiiPill(it.autoCheck),
-                            ];
 
-                            if (bannedCnt > 0) {
-                                pills.push(
-                                    <span className={cx("cb-reviewer-pill", "cb-reviewer-pill--danger")}>
-                                        금칙어 {bannedCnt}
-                                    </span>
-                                );
-                            }
+                                // VIDEO 아니면 문서 pill
+                                renderDocPill(it),
 
-                            if (isRiskItem(it) && it.riskScore != null) {
-                                pills.push(
+                                // VIDEO면 1/2차 pill
+                                stage ? renderStagePill(stage) : null,
+
+                                bannedCnt > 0 ? (
+                                    <span className={cx("cb-reviewer-pill", "cb-reviewer-pill--danger")}>금칙어 {bannedCnt}</span>
+                                ) : null,
+                                riskWarn && it.riskScore != null ? (
                                     <span className={cx("cb-reviewer-pill", "cb-reviewer-pill--warn")}>
                                         Risk {Math.round(it.riskScore)}
                                     </span>
-                                );
-                            }
+                                ) : null,
+                            ];
 
+                            const pills = pillsRaw.filter(Boolean) as React.ReactNode[];
                             const shown = pills.slice(0, MAX_PILLS_VIRTUAL);
                             const extra = pills.length - shown.length;
-
 
                             return (
                                 <button
@@ -415,16 +501,21 @@ const ReviewerQueue: React.FC<ReviewerQueueProps> = (props) => {
                                         {riskWarn && <span className="cb-reviewer-risk-dot" aria-label="risk" />}
                                     </div>
 
+                                    {/* (가상 스크롤만) meta 한 줄 고정 */}
                                     <div className={cx("cb-reviewer-item-meta", "cb-reviewer-item-meta--single")}>
                                         {it.department} • {it.creatorName} • {formatDateTime(it.submittedAt)}
                                     </div>
 
+                                    {/* (가상 스크롤만) pills 한 줄 + +N */}
                                     <div className={cx("cb-reviewer-item-pills", "cb-reviewer-item-pills--single")}>
-                                        {shown.map((node, idx) => (
-                                            <React.Fragment key={idx}>{node}</React.Fragment>
-                                        ))}
+                                        <div className="cb-reviewer-item-pills-main">
+                                            {shown.map((node, idx) => (
+                                                <React.Fragment key={idx}>{node}</React.Fragment>
+                                            ))}
+                                        </div>
+
                                         {extra > 0 && (
-                                            <span className={cx("cb-reviewer-pill", "cb-reviewer-pill--neutral")}>
+                                            <span className={cx("cb-reviewer-pill", "cb-reviewer-pill--neutral", "cb-reviewer-pill--more")}>
                                                 +{extra}
                                             </span>
                                         )}
@@ -437,11 +528,9 @@ const ReviewerQueue: React.FC<ReviewerQueueProps> = (props) => {
                     pageItems.map((it) => {
                         const isActive = it.id === selectedId;
 
-                        // (3) 옵셔널 방어
-                        const bannedCnt = it.autoCheck.bannedWords?.length ?? 0;
-
-                        // (4) 리스크 기준 통일
+                        const bannedCnt = it.autoCheck?.bannedWords?.length ?? 0;
                         const riskWarn = isRiskItem(it);
+                        const stage = getVideoStage(it);
 
                         return (
                             <button
@@ -475,12 +564,12 @@ const ReviewerQueue: React.FC<ReviewerQueueProps> = (props) => {
                                     {renderStatusPill(it.status)}
                                     {renderCategoryPill(it.contentCategory)}
                                     {renderPiiPill(it.autoCheck)}
+                                    {renderDocPill(it)}
+                                    {stage && renderStagePill(stage)}
                                     {bannedCnt > 0 && (
-                                        <span className={cx("cb-reviewer-pill", "cb-reviewer-pill--danger")}>
-                                            금칙어 {bannedCnt}
-                                        </span>
+                                        <span className={cx("cb-reviewer-pill", "cb-reviewer-pill--danger")}>금칙어 {bannedCnt}</span>
                                     )}
-                                    {isRiskItem(it) && it.riskScore != null && (
+                                    {riskWarn && it.riskScore != null && (
                                         <span className={cx("cb-reviewer-pill", "cb-reviewer-pill--warn")}>
                                             Risk {Math.round(it.riskScore)}
                                         </span>

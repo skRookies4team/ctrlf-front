@@ -24,6 +24,14 @@ export type DetailTabId = "preview" | "script" | "checks" | "audit";
 export type SortMode = "newest" | "risk";
 export type ListMode = "paged" | "virtual";
 
+export type ReviewStageFilter = "all" | "stage1" | "stage2" | "docs";
+type StageCounts = { all: number; stage1: number; stage2: number; docs: number };
+
+function getReviewStage(it: ReviewWorkItem): 1 | 2 | null {
+  if (it.contentType !== "VIDEO") return null; // 문서/정책 등
+  return it.videoUrl?.trim() ? 2 : 1;          // VIDEO: videoUrl 있으면 2차(최종)
+}
+
 export type ToastState =
   | { open: false }
   | { open: true; tone: "neutral" | "warn" | "danger"; message: string };
@@ -140,12 +148,12 @@ type LockState =
   | { kind: "idle" }
   | { kind: "locking"; itemId: string }
   | {
-      kind: "locked";
-      itemId: string;
-      lockToken: string;
-      expiresAt?: string;
-      ownerName?: string;
-    }
+    kind: "locked";
+    itemId: string;
+    lockToken: string;
+    expiresAt?: string;
+    ownerName?: string;
+  }
   | { kind: "blocked"; itemId: string; ownerName?: string; expiresAt?: string };
 
 function formatConflictToast(payload?: ConflictPayload) {
@@ -199,9 +207,9 @@ export function useReviewerDeskController(options: UseReviewerDeskControllerOpti
     apiRef.current = isHttpMode
       ? getReviewerApi()
       : createReviewerApiMock({
-          initialItems: seedItems,
-          me: { id: effectiveReviewerName, name: effectiveReviewerName },
-        });
+        initialItems: seedItems,
+        me: { id: effectiveReviewerName, name: effectiveReviewerName },
+      });
   }
 
   // http 모드: 최초 refresh로 세팅 / mock 모드: seedItems로 초기화
@@ -216,6 +224,7 @@ export function useReviewerDeskController(options: UseReviewerDeskControllerOpti
   const [onlyMine, setOnlyMine] = useState(false);
   const [riskOnly, setRiskOnly] = useState(false);
   const [sortMode, setSortMode] = useState<SortMode>("newest");
+  const [stageFilter, setStageFilter] = useState<ReviewStageFilter>("all");
 
   useEffect(() => {
     if (activeTab === "pending" && onlyMine) setOnlyMine(false);
@@ -327,7 +336,7 @@ export function useReviewerDeskController(options: UseReviewerDeskControllerOpti
       // 언마운트 시 남은 락 해제(상태 업데이트는 의미 없으니 API만 best-effort)
       const cur = decisionLockRef.current;
       if (cur) {
-        void apiRef.current?.releaseLock(cur.itemId, cur.lockToken).catch(() => {});
+        void apiRef.current?.releaseLock(cur.itemId, cur.lockToken).catch(() => { });
         decisionLockRef.current = null;
       }
       decisionCtxRef.current = null;
@@ -413,7 +422,7 @@ export function useReviewerDeskController(options: UseReviewerDeskControllerOpti
     // 기존 락이 있으면 best-effort 해제 (mock에서도 상태 꼬임 방지)
     const cur = decisionLockRef.current;
     if (cur) {
-      void apiRef.current?.releaseLock(cur.itemId, cur.lockToken).catch(() => {});
+      void apiRef.current?.releaseLock(cur.itemId, cur.lockToken).catch(() => { });
       decisionLockRef.current = null;
     }
 
@@ -448,7 +457,7 @@ export function useReviewerDeskController(options: UseReviewerDeskControllerOpti
   }, [items, effectiveReviewerName]);
 
   // ===== filtered =====
-  const filtered = useMemo(() => {
+  const filteredBase = useMemo(() => {
     const q = query.trim().toLowerCase();
 
     const byTab = items.filter((it) => {
@@ -461,13 +470,14 @@ export function useReviewerDeskController(options: UseReviewerDeskControllerOpti
     const byMine = onlyMine
       ? byTab.filter((it) => it.audit.some((a) => a.actor === effectiveReviewerName))
       : byTab;
+
     const byRisk = riskOnly ? byMine.filter((it) => isRiskItem(it)) : byMine;
 
     const byQuery = q
       ? byRisk.filter((it) => {
-          const hay = `${it.title} ${it.department} ${it.creatorName}`.toLowerCase();
-          return hay.includes(q);
-        })
+        const hay = `${it.title} ${it.department} ${it.creatorName}`.toLowerCase();
+        return hay.includes(q);
+      })
       : byRisk;
 
     const list = [...byQuery];
@@ -493,6 +503,32 @@ export function useReviewerDeskController(options: UseReviewerDeskControllerOpti
     list.sort((a, b) => (a.submittedAt < b.submittedAt ? 1 : -1));
     return list;
   }, [items, activeTab, query, onlyMine, riskOnly, sortMode, effectiveReviewerName]);
+
+  const stageCounts = useMemo((): StageCounts => {
+    let stage1 = 0;
+    let stage2 = 0;
+    let docs = 0;
+
+    for (const it of filteredBase) {
+      const st = getReviewStage(it);
+      if (st === 1) stage1 += 1;
+      else if (st === 2) stage2 += 1;
+      else docs += 1;
+    }
+
+    return { all: filteredBase.length, stage1, stage2, docs };
+  }, [filteredBase]);
+
+  const filtered = useMemo(() => {
+    if (stageFilter === "all") return filteredBase;
+
+    if (stageFilter === "docs") {
+      return filteredBase.filter((it) => getReviewStage(it) === null);
+    }
+
+    const target = stageFilter === "stage1" ? 1 : 2;
+    return filteredBase.filter((it) => getReviewStage(it) === target);
+  }, [filteredBase, stageFilter]);
 
   // pagination 계산
   const totalPages = useMemo(() => {
@@ -666,6 +702,8 @@ export function useReviewerDeskController(options: UseReviewerDeskControllerOpti
 
     const commonBlockers: GuardPill[] = [];
 
+    const stage = getReviewStage(selectedItem); // 1 | 2 | null
+
     if (lockBlockingForSelected) {
       if (lockState.kind === "locking") {
         commonBlockers.push({
@@ -678,9 +716,8 @@ export function useReviewerDeskController(options: UseReviewerDeskControllerOpti
           tone: "warn",
           label: "다른 검토자가 처리 중",
           detail: lockState.ownerName
-            ? `처리자: ${lockState.ownerName}${
-                lockState.expiresAt ? ` · 만료 ${formatDateTime(lockState.expiresAt)}` : ""
-              }`
+            ? `처리자: ${lockState.ownerName}${lockState.expiresAt ? ` · 만료 ${formatDateTime(lockState.expiresAt)}` : ""
+            }`
             : "잠시 후 다시 시도하세요.",
         });
       }
@@ -724,7 +761,20 @@ export function useReviewerDeskController(options: UseReviewerDeskControllerOpti
       commonBlockers.length === 0 && !overlayBlock && !busyBlock && !statusBlock && !lockBlockingForSelected;
 
     const approvePills: GuardPill[] = approveAllowed
-      ? [{ tone: "neutral", label: "승인 시 즉시 공개", detail: "승인(APPROVED) 후 자동 공개(PUBLISHED) 이력이 함께 기록됩니다." }]
+      ? [
+        selectedItem.contentType === "VIDEO" && stage === 1
+          ? {
+            tone: "neutral",
+            label: "1차 승인: 비공개",
+            detail: "스크립트만 승인되며, 제작자가 영상 생성을 진행합니다.",
+          }
+          : {
+            tone: "neutral",
+            label: "승인 시 즉시 공개",
+            detail:
+              "승인(APPROVED) 후 자동 공개(PUBLISHED) 이력이 함께 기록됩니다.",
+          },
+      ]
       : commonBlockers;
 
     const rejectPills: GuardPill[] = rejectAllowed
@@ -769,7 +819,15 @@ export function useReviewerDeskController(options: UseReviewerDeskControllerOpti
 
     const itemId = selectedItem.id;
     const itemVersion = selectedItem.version;
-    const message = `'${selectedItem.title}' 항목을 승인합니다. 승인 시 즉시 공개(PUBLISHED) 처리됩니다.`;
+    const stage = getReviewStage(selectedItem);
+
+    const message =
+      selectedItem.contentType !== "VIDEO"
+        ? `'${selectedItem.title}' 항목을 승인합니다. 승인 시 즉시 공개(PUBLISHED) 처리됩니다.`
+        : stage === 1
+          ? `'${selectedItem.title}' 항목을 1차(스크립트) 승인합니다. (공개되지 않으며, 제작자가 영상 생성을 진행합니다.)`
+          : `'${selectedItem.title}' 항목을 2차(최종) 승인합니다. 승인 시 즉시 공개(PUBLISHED) 처리됩니다.`;
+
 
     const seq = ++lockReqSeqRef.current;
 
@@ -864,12 +922,39 @@ export function useReviewerDeskController(options: UseReviewerDeskControllerOpti
       const next = normalizeDecisionResult(res.item as ReviewWorkItemExt, "approve");
       patchItemInState(next);
 
+      const isFinal =
+        selectedItem.contentType !== "VIDEO"
+          ? true
+          : Boolean(selectedItem.videoUrl && selectedItem.videoUrl.trim().length > 0);
+
       if (!isHttpMode) {
-        appendAudit(selectedItem.id, "APPROVED", "승인 처리");
-        appendAudit(selectedItem.id, "PUBLISHED", "승인 즉시 자동 공개");
+        appendAudit(
+          selectedItem.id,
+          "APPROVED",
+          selectedItem.contentType !== "VIDEO"
+            ? "승인 처리"
+            : isFinal
+              ? "2차(최종) 승인 처리"
+              : "1차(스크립트) 승인 처리"
+        );
+
+        if (isFinal) {
+          appendAudit(
+            selectedItem.id,
+            "PUBLISHED",
+            selectedItem.contentType !== "VIDEO" ? "승인 후 공개" : "2차 승인 후 공개"
+          );
+        }
       }
 
-      showToast("neutral", "승인 완료 (즉시 공개)");
+      showToast(
+        "neutral",
+        selectedItem.contentType !== "VIDEO"
+          ? "승인 완료 (공개됨)"
+          : isFinal
+            ? "2차(최종) 승인 완료 (공개됨)"
+            : "1차 승인 완료 (공개되지 않음: 제작자가 영상 생성 가능)"
+      );
       setDecisionModal({ open: false, kind: null });
       decisionCtxRef.current = null;
     } catch (err: unknown) {
@@ -1086,6 +1171,10 @@ export function useReviewerDeskController(options: UseReviewerDeskControllerOpti
     closePreview,
     handleSaveNote,
     moveSelection,
+
+    stageFilter,
+    setStageFilter,
+    stageCounts,
 
     lastRefreshedAtLabel,
 

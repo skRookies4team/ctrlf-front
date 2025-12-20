@@ -7310,3 +7310,245 @@
   border-color: #111827;
   color: #ffffff;
 }
+
+/* =========================
+   Stage Pills (전체 / 1차 / 2차)
+   - Creator / Reviewer 공용
+   ========================= */
+
+/* wrapper */
+.cb-reviewer-stage-pills,
+.cb-creator-stage-pills,
+.cb-stage-pills {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px;
+  height: 26px;                 /* 전체 높이 고정으로 “두꺼움” 제거 */
+  border-radius: 999px;
+  background-color: #f9fafb;    /* 더 가벼운 배경 */
+  border: 1px solid #e5e7eb;
+}
+
+/* row */
+.cb-creator-stage-row,
+.cb-reviewer-stage-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;                     /* 과한 간격 줄임 */
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+/* Creator Studio: 상태 탭 row ↔ 단계(전체/1차/2차) row 간격 확보 */
+.cb-creator-left-top .cb-creator-stage-row {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #f3f4f6;
+}
+
+/* pill button */
+.cb-reviewer-stage-pill,
+.cb-creator-stage-pill,
+.cb-stage-pill {
+  -webkit-appearance: none;
+  appearance: none;
+  border: none;
+  background: transparent;
+
+  height: 22px;                 /* 버튼 자체도 낮게 */
+  padding: 0 9px;               /* 세로 padding 제거 */
+  border-radius: 999px;
+
+  font-size: 10.5px;            /* 살짝 축소 */
+  font-weight: 650;             /* 너무 두껍지 않게(가독성 유지) */
+  line-height: 1;
+
+  color: #6b7280;
+  cursor: pointer;
+  white-space: nowrap;
+
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+
+  transition: background-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.cb-reviewer-stage-pill:not(.cb-reviewer-stage-pill--active):not(.is-active):hover,
+.cb-creator-stage-pill:not(.cb-creator-stage-pill--active):not(.is-active):hover,
+.cb-stage-pill:not(.cb-stage-pill--active):not(.is-active):hover {
+  background-color: #ffffff;
+  color: #111827;
+  box-shadow: 0 0 0 1px #e5e7eb inset;
+}
+
+/* active */
+.cb-reviewer-stage-pill--active,
+.cb-creator-stage-pill--active,
+.cb-stage-pill--active,
+.cb-reviewer-stage-pill.is-active,
+.cb-creator-stage-pill.is-active,
+.cb-stage-pill.is-active {
+  background-color: #111827;
+  color: #ffffff;
+  box-shadow: 0 0 0 1px #111827 inset;  /* 외곽 두께감 대신 inset */
+  transform: none;                      /* translateY 제거(툭 튀는 느낌 제거) */
+}
+
+/* count badge */
+.cb-reviewer-stage-count,
+.cb-creator-stage-count,
+.cb-stage-count {
+  min-width: 16px;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: 999px;
+
+  background-color: #e5e7eb;
+  color: #111827;
+
+  font-size: 9.5px;             /* 배지 텍스트도 축소 */
+  font-weight: 800;
+
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* active 안에서 count 대비 */
+.cb-reviewer-stage-pill--active .cb-reviewer-stage-count,
+.cb-creator-stage-pill--active .cb-creator-stage-count,
+.cb-stage-pill--active .cb-stage-count,
+.cb-reviewer-stage-pill.is-active .cb-reviewer-stage-count,
+.cb-creator-stage-pill.is-active .cb-creator-stage-count,
+.cb-stage-pill.is-active .cb-stage-count {
+  background-color: rgba(255, 255, 255, 0.22);
+  color: #ffffff;
+}
+
+/* 접근성 포커스 */
+.cb-reviewer-stage-pill:focus-visible,
+.cb-creator-stage-pill:focus-visible,
+.cb-stage-pill:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(17, 24, 39, 0.18);
+}
+
+/* ===== Creator Stepper (NEW) ===== */
+
+.cb-creator-stepper-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cb-creator-stepper-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.cb-creator-stepper-title {
+  font-size: 12px;
+  font-weight: 900;
+  color: #111827;
+}
+
+.cb-creator-stepper-meta {
+  font-size: 11px;
+  color: #6b7280;
+  white-space: nowrap;
+}
+
+.cb-creator-stepper {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: stretch;
+}
+
+.cb-creator-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 999px;
+  border: 1px solid #e5e7eb;
+  background: #ffffff;
+  min-height: 34px;
+}
+
+.cb-creator-step-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cb-creator-step-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: #111827;
+  line-height: 1.1;
+}
+
+.cb-creator-step-hint {
+  font-size: 11px;
+  color: #6b7280;
+  line-height: 1.1;
+}
+
+.cb-creator-step-badge {
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 900;
+  border: 1px solid #d1d5db;
+  background: #ffffff;
+  color: #111827;
+  flex: 0 0 auto;
+}
+
+.cb-creator-step--locked {
+  opacity: 0.45;
+}
+
+.cb-creator-step--active {
+  border-color: #111827;
+  box-shadow: 0 0 0 1px #111827 inset;
+}
+
+.cb-creator-step--active .cb-creator-step-badge {
+  background: #111827;
+  color: #ffffff;
+  border-color: #111827;
+}
+
+.cb-creator-step--done {
+  background: #f8fafc;
+}
+
+.cb-creator-step--done .cb-creator-step-badge {
+  background: #111827;
+  color: #ffffff;
+  border-color: #111827;
+}
+
+.cb-creator-step--error {
+  border-color: #ef4444;
+  box-shadow: 0 0 0 1px #ef4444 inset;
+}
+
+.cb-creator-step--error .cb-creator-step-badge {
+  background: #ef4444;
+  color: #ffffff;
+  border-color: #ef4444;
+}

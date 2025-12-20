@@ -2,6 +2,16 @@
 
 export type CreatorType = "DEPT_CREATOR" | "GLOBAL_CREATOR";
 
+export type ReviewStage = "SCRIPT" | "FINAL";
+
+/**
+ * CreatorStatus는 "시스템 상태"를 의미합니다.
+ *
+ * 정책(중요):
+ * - 1차(스크립트) 승인이 완료되면 scriptApprovedAt이 세팅되며,
+ *   아이템은 "영상 생성/2차 준비"를 위해 status가 DRAFT로 유지/복귀될 수 있습니다.
+ *   즉, "1차 승인 완료"는 status가 아니라 scriptApprovedAt(+파생 상태)로 표현됩니다.
+ */
 export type CreatorStatus =
   | "DRAFT"
   | "GENERATING"
@@ -60,7 +70,7 @@ export interface CreatorPipeline {
   startedAt?: number;
   finishedAt?: number;
   message?: string;
-  mode?: "FULL" | "VIDEO_ONLY";
+  mode: "FULL" | "VIDEO_ONLY" | "SCRIPT_ONLY";
 }
 
 export interface CreatorAssets {
@@ -110,6 +120,19 @@ export interface CreatorWorkItem {
 
   assets: CreatorAssets;
   pipeline: CreatorPipeline;
+
+  /**
+   * 1차(스크립트) 승인 시각
+   * - 존재하면 "영상 생성 가능(2차 준비)" 단계로 진입했다고 해석
+   * - UI 탭 분류는 status가 아니라 이 값(파생 상태)을 기준으로 수행 가능
+   */
+  scriptApprovedAt?: number;
+
+  /** REVIEW_PENDING/REJECTED일 때 현재 단계(명시적 stage) */
+  reviewStage?: ReviewStage;
+
+  /** 반려가 1차인지 2차인지(명시적 stage) */
+  rejectedStage?: ReviewStage;
 }
 
 export interface CreatorValidationResult {
@@ -133,4 +156,13 @@ export interface CreatorVersionSnapshot {
   jobTrainingId?: string;
   targetDeptIds: string[];
   assets: CreatorAssets;
+
+  reviewStage?: ReviewStage;
+  recordedAt?: number;
+  reason?: string;
+  sourceFileName?: string;
+  isMandatory?: boolean;
+  script?: string;
+  videoUrl?: string;
+  thumbnailUrl?: string;
 }

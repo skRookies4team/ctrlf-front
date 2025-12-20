@@ -17,6 +17,8 @@ const ReviewerActionBar: React.FC<{
   isOverlayOpen: boolean;
   approveProcessing: boolean;
   rejectProcessing: boolean;
+  approveLabel?: string;
+  approveProcessingLabel?: string;
   onApprove: () => void;
   onReject: () => void;
 }> = ({
@@ -27,6 +29,8 @@ const ReviewerActionBar: React.FC<{
   isOverlayOpen,
   approveProcessing,
   rejectProcessing,
+  approveLabel,
+  approveProcessingLabel,
   onApprove,
   onReject,
 }) => {
@@ -100,7 +104,9 @@ const ReviewerActionBar: React.FC<{
                   : undefined
             }
           >
-            {approveProcessing ? "승인 중…" : "승인"}
+            {approveProcessing
+              ? (approveProcessingLabel ?? "승인 중…")
+              : (approveLabel ?? "승인")}
           </button>
         </div>
       </div>

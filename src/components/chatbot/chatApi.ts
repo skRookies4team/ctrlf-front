@@ -29,7 +29,6 @@ export async function sendChatToAI(req: ChatRequest): Promise<string> {
   // 너무 과하지 않게, 도메인 정보만 살짝 표시
   const domainLabelMap: Record<ChatDomain, string> = {
     general: "일반",
-    policy: "규정 안내",
     faq: "FAQ",
     quiz: "퀴즈",
     edu: "교육",
