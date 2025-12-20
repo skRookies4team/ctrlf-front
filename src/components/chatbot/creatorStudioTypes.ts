@@ -166,3 +166,27 @@ export interface CreatorVersionSnapshot {
   videoUrl?: string;
   thumbnailUrl?: string;
 }
+
+export interface CreatorScriptScene {
+  id: string;
+
+  chapter_id?: string;
+  chapter_title?: string;
+  chapter_order?: number;
+
+  scene_order: number;
+  purpose: string;
+  duration_sec: number;
+
+  narration: string;
+  caption: string;
+
+  source_refs: string[];
+  updated_at: string;
+}
+
+export type CreatorScriptScenePatchErrors = Partial<{
+  narration: string;
+  caption: string;
+  duration_sec: string;
+}>;

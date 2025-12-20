@@ -1577,7 +1577,7 @@ export function useCreatorStudioController(options?: UseCreatorStudioControllerO
     runPipelineForSelected();
   };
 
-  const updateSelectedScript = (script: string) => {
+  const updateSelectedScript = (script: string, options?: { silent?: boolean }) => {
     if (!selectedItem) return;
 
     const approvedAt = getScriptApprovedAt(selectedItem);
@@ -1591,8 +1591,6 @@ export function useCreatorStudioController(options?: UseCreatorStudioControllerO
       return;
     }
 
-    // Stage1: 스크립트 수정은 정상 흐름이므로 “영상 재생성” 안내 금지
-    // 대신, 파이프라인 표시는 IDLE로 돌려도 1차 검토 요청이 막히지 않도록 validateForReview가 분기됨
     updateSelected({
       assets: {
         ...selectedItem.assets,
@@ -1604,14 +1602,15 @@ export function useCreatorStudioController(options?: UseCreatorStudioControllerO
       failedReason: undefined,
     });
 
-    // 토스트 스팸 방지(throttle)
-    const now = Date.now();
-    const last = scriptToastRef.current;
-    const shouldToast = last.id !== selectedItem.id || now - last.ts > 1300;
+    if (!options?.silent) {
+      const now = Date.now();
+      const last = scriptToastRef.current;
+      const shouldToast = last.id !== selectedItem.id || now - last.ts > 1300;
 
-    if (shouldToast) {
-      scriptToastRef.current = { id: selectedItem.id, ts: now };
-      showToast("info", "스크립트가 수정되었습니다. 스크립트 검토 요청(1차)이 가능합니다.");
+      if (shouldToast) {
+        scriptToastRef.current = { id: selectedItem.id, ts: now };
+        showToast("info", "스크립트가 수정되었습니다. 스크립트 검토 요청(1차)이 가능합니다.");
+      }
     }
   };
 
@@ -1744,6 +1743,7 @@ export function useCreatorStudioController(options?: UseCreatorStudioControllerO
     retryPipelineForSelected,
     failPipelineForSelected,
     updateSelectedScript,
+    showToast,
     requestReviewForSelected,
     reopenRejectedToDraft,
     deleteDraft,

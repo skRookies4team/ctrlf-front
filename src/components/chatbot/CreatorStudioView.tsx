@@ -17,6 +17,7 @@ import {
   isJobCategory, // 직무/4대 판별 + Training UI 조건부
 } from "./creatorStudioMocks";
 import { useCreatorStudioController } from "./useCreatorStudioController";
+import CreatorScriptSceneEditor from "./CreatorScriptSceneEditor";
 import type {
   CreatorSortMode,
   CreatorTabId,
@@ -371,8 +372,8 @@ function filterByQuery(
       it.targetDeptIds.length === 0
         ? "전사"
         : it.targetDeptIds
-            .map((id) => deptNameById.get(id) ?? deptLabel(id))
-            .join(" ");
+          .map((id) => deptNameById.get(id) ?? deptLabel(id))
+          .join(" ");
 
     const templateText = templateNameById.get(it.templateId) ?? templateLabel(it.templateId);
 
@@ -793,6 +794,7 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
     runVideoOnlyForSelected,    // (2차 준비) 영상 생성/재생성
     retryPipelineForSelected,
     updateSelectedScript,
+    showToast,
     requestReviewForSelected,   // (1차/2차) 검토 요청
     reopenRejectedToDraft,
     deleteDraft,
@@ -1174,6 +1176,14 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
 
   const selectedKey = selectedItem?.id ?? null;
 
+  // 스크립트(Scene) 편집에서 “저장되지 않은 변경사항” 가드용
+  const [scriptSceneDirty, setScriptSceneDirty] = useState(false);
+
+  // 아이템이 바뀌면 dirty 상태 초기화
+  useEffect(() => {
+    setScriptSceneDirty(false);
+  }, [selectedKey]);
+
   useLayoutEffect(() => {
     if (!selectedKey) return;
     detailScrollRef.current?.scrollTo({ top: 0 });
@@ -1256,7 +1266,7 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
     if (item.status === "GENERATING") return "생성 중…";
     const _hasSource =
       (item.assets?.sourceFileName ?? "").trim().length > 0;
-    const _hasScript = 
+    const _hasScript =
       (item.assets?.script ?? "").trim().length > 0;
     const _hasVideo =
       (item.assets?.videoUrl ?? "").trim().length > 0;
@@ -1311,9 +1321,9 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
 
   const flowMetaText = selectedItem
     ? `현재: ${phaseHintFor(selectedItem)}${selectedIsScriptApproved && scriptApprovedAt
-        ? ` · 1차 승인 ${formatDateTime(scriptApprovedAt)}`
-        : ""
-      }`
+      ? ` · 1차 승인 ${formatDateTime(scriptApprovedAt)}`
+      : ""
+    }`
     : "";
   // ==============================
 
@@ -1449,7 +1459,7 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
                           className={cx(
                             "cb-reviewer-stage-pill",
                             creatorStageFilter === "all" &&
-                              "cb-reviewer-stage-pill--active"
+                            "cb-reviewer-stage-pill--active"
                           )}
                           onClick={() => setCreatorStageFilter("all")}
                         >
@@ -1463,7 +1473,7 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
                           className={cx(
                             "cb-reviewer-stage-pill",
                             creatorStageFilter === "stage1" &&
-                              "cb-reviewer-stage-pill--active"
+                            "cb-reviewer-stage-pill--active"
                           )}
                           onClick={() => setCreatorStageFilter("stage1")}
                         >
@@ -1477,7 +1487,7 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
                           className={cx(
                             "cb-reviewer-stage-pill",
                             creatorStageFilter === "stage2" &&
-                              "cb-reviewer-stage-pill--active"
+                            "cb-reviewer-stage-pill--active"
                           )}
                           onClick={() => setCreatorStageFilter("stage2")}
                         >
@@ -1538,7 +1548,7 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
                             "cb-reviewer-item",
                             "cb-creator-item",
                             selectedItem?.id === it.id &&
-                              "cb-reviewer-item--active"
+                            "cb-reviewer-item--active"
                           )}
                           onMouseDown={(e) => e.stopPropagation()}
                           onClick={() => selectItem(it.id)}
@@ -2063,19 +2073,29 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
                                   ? "(1차 승인 완료)"
                                   : "(1차 검토 대상)"}
                               </div>
-                              <textarea
-                                className={cx(
-                                  "cb-reviewer-textarea",
-                                  "cb-creator-script-textarea"
-                                )}
-                                value={selectedItem.assets.script ?? ""}
-                                disabled={disableMeta}
-                                placeholder="스크립트 생성 후 표시됩니다."
-                                onMouseDown={(e) => e.stopPropagation()}
-                                onChange={(e) =>
-                                  updateSelectedScript(e.target.value)
-                                }
-                              />
+                              {/* JSON/원문 편집 금지: 씬(Scene) 편집 UI로만 수정 */}
+                              {hasScript ? (
+                                <>
+                                  <CreatorScriptSceneEditor
+                                    scriptId={selectedItem.id}
+                                    videoId={selectedItem.id}
+                                    scriptText={selectedItem.assets.script ?? ""}
+                                    disabled={disableMeta}
+                                    showToast={showToast}
+                                    onCommitScriptText={(next) => updateSelectedScript(next, { silent: true })}
+                                    onDirtyChange={(dirty) => setScriptSceneDirty(dirty)}
+                                  />
+
+                                  {scriptSceneDirty && !disableMeta ? (
+                                    <div className="cb-creator-muted" style={{ marginTop: 6 }}>
+                                      저장되지 않은 스크립트 수정이 있습니다. 수정한 씬에서 “저장(씬)”을 눌러 반영하세요.
+                                    </div>
+                                  ) : null}
+                                </>
+                              ) : (
+                                <div className="cb-creator-muted">스크립트 생성 후 씬 편집이 가능합니다.</div>
+                              )}
+
                               {selectedIsScriptApproved && (
                                 <div className="cb-creator-muted" style={{ marginTop: 6 }}>
                                   1차 승인 이후 스크립트는 잠금됩니다.
@@ -2201,7 +2221,7 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
                             className="cb-admin-primary-btn"
                             onMouseDown={(e) => e.stopPropagation()}
                             onClick={requestReviewForSelected}
-                            disabled={!selectedValidation.ok || selectedItem.status !== "DRAFT"}
+                            disabled={!selectedValidation.ok || selectedItem.status !== "DRAFT" || scriptSceneDirty}
                             type="button"
                           >
                             {selectedIsScriptApproved ? "최종 검토 요청(2차)" : "스크립트 검토 요청(1차)"}
