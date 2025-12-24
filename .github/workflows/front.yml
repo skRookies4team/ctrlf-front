@@ -23,6 +23,11 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
+      - name: Install dependencies and Build
+        run: |
+          npm install
+          npm run build  # 실행 후 최상위에 dist/ 폴더가 생성됨
+          
       - name: Docker 이미지 빌드 및 푸시
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
