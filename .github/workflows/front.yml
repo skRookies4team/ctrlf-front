@@ -31,7 +31,7 @@ jobs:
       - name: Docker 이미지 빌드 및 푸시
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: argocd/frontend-service 
+          ECR_REPOSITORY: argocd/front-service 
           IMAGE_TAG: ${{ github.sha }}
         run: |
           # 태그 생성 시 변수 사이에 슬래시(/)가 하나만 들어가도록 확인
