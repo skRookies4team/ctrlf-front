@@ -18,3 +18,21 @@ spec:
         image: <IMAGE_PLACEHOLDER> # CI에 의해 자동 교체됨
         ports:
         - containerPort: 80
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-service
+  namespace: argocd
+  annotations:
+    # AWS Load Balancer Controller를 사용하는 경우 (필요 시 수정)
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+spec:
+  type: LoadBalancer
+  selector:
+    app: frontend-service
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 80
