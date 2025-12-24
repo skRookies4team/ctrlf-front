@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
       - name: front
-        image: 858507113889.dkr.ecr.ap-northeast-2.amazonaws.com/argocd/front-service:c71a2965600f9277fb86718a41792ef812aec236
+        image: 858507113889.dkr.ecr.ap-northeast-2.amazonaws.com/argocd/front-service:93ef8adfa260165916bd20ae3a37d5dbb052d48b
         ports:
         - containerPort: 80
 
