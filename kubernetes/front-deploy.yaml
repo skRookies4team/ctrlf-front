@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
       - name: frontend
-        image: 858507113889.dkr.ecr.ap-northeast-2.amazonaws.com/argocd/front-service:c71a2965600f9277fb86718a41792ef812aec236
+        image: 858507113889.dkr.ecr.ap-northeast-2.amazonaws.com/argocd/front-service:40cdc1321be518a44c612122ba37b8104e6eb942
         ports:
         - containerPort: 80
 
