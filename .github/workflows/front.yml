@@ -1,9 +1,14 @@
-name: Frontend React Deploy
+name: Frontend Deploy (Chatbot)
 
 on:
   push:
-    branches: [ "main" ] # main 브랜치에 push될 때 실행
-    #paths: [ "ctrlf-front/**" ] # frontend 폴더 내 파일이 변경될 때만 실행
+    branches: ["main"]
+    # 필요하면 경로 필터를 다시 켜도 됨
+    # paths:
+    #   - "apps/**"
+    #   - ".github/workflows/front.yml"
+    #   - "package.json"
+    #   - "package-lock.json"
 
 jobs:
   build-and-deploy:
@@ -16,15 +21,23 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18' # 프로젝트에 맞는 노드 버전
+          node-version: "22"
+          cache: "npm"
 
-      - name: Install dependencies
-        run: npm install
+      - name: Install dependencies (workspaces)
+        run: npm ci
 
-      - name: Build project
-        run: npm run build
+      - name: Lint (all workspaces)
+        run: npm run lint
 
-      - name: Deploy to S3
+      - name: Build Chatbot
+        run: npm run build:chatbot
+
+      # groupware도 깨지지 않게 같이 빌드 검증하고 싶으면 아래 줄 유지
+      - name: Build Groupware
+        run: npm run build:groupware
+
+      - name: Deploy Chatbot to S3
         uses: jakejarvis/s3-sync-action@master
         with:
           args: --delete
@@ -32,5 +45,5 @@ jobs:
           AWS_S3_BUCKET: "ctrl-s3"
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: 'ap-northeast-2' # 서울 리전
-          SOURCE_DIR: 'dist'
+          AWS_REGION: "ap-northeast-2"
+          SOURCE_DIR: "apps/chatbot/dist"

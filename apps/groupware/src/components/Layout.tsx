@@ -6,13 +6,13 @@ import type { KeycloakTokenParsed } from "keycloak-js";
 
 // 헤더/사이드바 스타일은 기존 Dashboard.css 재사용
 import "../pages/Dashboard.css";
-import FloatingChatbotRoot from "./chatbot/FloatingChatbotRoot";
+import FloatingChatbotRoot from "../../../chatbot/src/components/chatbot/FloatingChatbotRoot";
 
 import {
   normalizeRoles,
   pickPrimaryRole,
   type UserRole,
-} from "../auth/roles";
+} from "../../../chatbot/src/auth/roles";
 
 interface LayoutProps {
   children: React.ReactNode;
