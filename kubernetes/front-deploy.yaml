@@ -11,10 +11,10 @@ spec:
   template:
     metadata:
       labels:
-        app: frontend-service
+        app: front-service
     spec:
       containers:
-      - name: frontend
+      - name: front
         image: 858507113889.dkr.ecr.ap-northeast-2.amazonaws.com/argocd/front-service:c71a2965600f9277fb86718a41792ef812aec236
         ports:
         - containerPort: 80
