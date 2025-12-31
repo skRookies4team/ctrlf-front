@@ -4,7 +4,7 @@ import FloatingDock from "./FloatingDock";
 import ChatbotApp from "./ChatbotApp";
 import EduPanel from "./EduPanel";
 import QuizPanel from "./QuizPanel";
-import AdminDashboardView from "./AdminDashboardView";
+import AdminDashboardView from "../dashboard/AdminDashboardView";
 import ReviewerDeskView from "./ReviewerDeskView";
 import CreatorStudioView from "./CreatorStudioView";
 import { initialCourses } from "./quizData";
@@ -246,9 +246,9 @@ const showExamBlockedToast = (): void => {
       if (!target) return;
 
       if (target.tagName.toLowerCase() === "button") {
-        const elToClose = document.getElementById(TOAST_ID) as
-          | HTMLDivElement
-          | null;
+        const elToClose = document.getElementById(
+          TOAST_ID
+        ) as HTMLDivElement | null;
         if (!elToClose) return;
 
         elToClose.style.opacity = "0";
@@ -555,9 +555,7 @@ const FloatingChatbotRoot: React.FC<FloatingChatbotRootProps> = ({
           <ReviewerDeskView
             anchor={anchor}
             onClose={handleCloseReviewerPanel}
-            onRequestFocus={() =>
-              dispatch({ type: "FOCUS", id: "reviewer" })
-            }
+            onRequestFocus={() => dispatch({ type: "FOCUS", id: "reviewer" })}
           />
         </div>
       )}
@@ -575,9 +573,7 @@ const FloatingChatbotRoot: React.FC<FloatingChatbotRootProps> = ({
           <CreatorStudioView
             anchor={anchor}
             onClose={handleCloseCreatorPanel}
-            onRequestFocus={() =>
-              dispatch({ type: "FOCUS", id: "creator" })
-            }
+            onRequestFocus={() => dispatch({ type: "FOCUS", id: "creator" })}
           />
         </div>
       )}

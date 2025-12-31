@@ -13,12 +13,16 @@ const LOCAL_VIDEO_FALLBACK = String(
   ENV.VITE_EDU_LOCAL_VIDEO_FALLBACK ?? "/videos/test1.mp4"
 );
 const ALLOW_LOCAL_VIDEO_FALLBACK =
-  String(ENV.VITE_EDU_ALLOW_LOCAL_VIDEO_FALLBACK ?? "").toLowerCase() === "true";
+  String(ENV.VITE_EDU_ALLOW_LOCAL_VIDEO_FALLBACK ?? "").toLowerCase() ===
+  "true";
 
 // presign 캐시 (objectKey 단위)
 const PRESIGN_CACHE_SAFETY_MS = 25_000; // 만료 직전 재사용 방지(안전 여유)
 const presignCache = new Map<string, { url: string; expiresAtMs: number }>();
-const presignInFlight = new Map<string, Promise<{ url: string; expiresAtMs: number }>>();
+const presignInFlight = new Map<
+  string,
+  Promise<{ url: string; expiresAtMs: number }>
+>();
 
 function isPlayableUrl(u: string): boolean {
   const s = (u ?? "").trim();
@@ -26,7 +30,8 @@ function isPlayableUrl(u: string): boolean {
   return /^https?:\/\//i.test(s) || s.startsWith("/") || s.startsWith("blob:");
 }
 
-const DEBUG_EDU_API = String(ENV.VITE_DEBUG_EDU_API ?? "").toLowerCase() === "true";
+const DEBUG_EDU_API =
+  String(ENV.VITE_DEBUG_EDU_API ?? "").toLowerCase() === "true";
 
 function logDebug(...args: unknown[]) {
   if (!DEBUG_EDU_API) return;
@@ -37,13 +42,22 @@ function isTimeoutLikeError(err: unknown): boolean {
   if (!err) return false;
   if (err instanceof Error) {
     const msg = (err.message ?? "").toLowerCase();
-    return msg.includes("timeout") || msg.includes("timed out") || msg.includes("etimedout");
+    return (
+      msg.includes("timeout") ||
+      msg.includes("timed out") ||
+      msg.includes("etimedout")
+    );
   }
   if (typeof err === "object" && err !== null) {
     const rec = err as Record<string, unknown>;
     const code = typeof rec.code === "string" ? rec.code.toLowerCase() : "";
-    const msg = typeof rec.message === "string" ? rec.message.toLowerCase() : "";
-    return code.includes("etimedout") || msg.includes("timeout") || msg.includes("timed out");
+    const msg =
+      typeof rec.message === "string" ? rec.message.toLowerCase() : "";
+    return (
+      code.includes("etimedout") ||
+      msg.includes("timeout") ||
+      msg.includes("timed out")
+    );
   }
   return false;
 }
@@ -100,7 +114,10 @@ function withHardTimeout<T>(
  * FIX: RequestInit.signal은 AbortSignal | null 일 수 있음
  * → null 허용하도록 타입을 넓혀 TS2345 해결
  */
-function attachParentAbort(parent: AbortSignal | null | undefined, ctrl: AbortController) {
+function attachParentAbort(
+  parent: AbortSignal | null | undefined,
+  ctrl: AbortController
+) {
   if (!parent) return;
   if (parent.aborted) {
     ctrl.abort();
@@ -115,7 +132,10 @@ function getCurrentAccessTokenOrNull(): string | null {
   return null;
 }
 
-function mergeHeaders(base: HeadersInit | undefined, extra: Record<string, string>): Headers {
+function mergeHeaders(
+  base: HeadersInit | undefined,
+  extra: Record<string, string>
+): Headers {
   const h = new Headers(base ?? undefined);
   for (const [k, v] of Object.entries(extra)) {
     if (!h.has(k)) h.set(k, v);
@@ -123,10 +143,16 @@ function mergeHeaders(base: HeadersInit | undefined, extra: Record<string, strin
   return h;
 }
 
-async function directFetchJson<T>(url: string, init: RequestInit, context: string): Promise<T> {
+async function directFetchJson<T>(
+  url: string,
+  init: RequestInit,
+  context: string
+): Promise<T> {
   const token = getCurrentAccessTokenOrNull();
   if (!token) {
-    throw new Error(`[EDU_API] ${context}: fallback fetch 실패 (현재 토큰이 없습니다)`);
+    throw new Error(
+      `[EDU_API] ${context}: fallback fetch 실패 (현재 토큰이 없습니다)`
+    );
   }
 
   const headers = mergeHeaders(init.headers, {
@@ -139,9 +165,9 @@ async function directFetchJson<T>(url: string, init: RequestInit, context: strin
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(
-      `[EDU_API] ${context}: fallback fetch HTTP ${res.status} ${res.statusText}${
-        text ? ` - ${text.slice(0, 300)}` : ""
-      }`
+      `[EDU_API] ${context}: fallback fetch HTTP ${res.status} ${
+        res.statusText
+      }${text ? ` - ${text.slice(0, 300)}` : ""}`
     );
   }
 
@@ -230,7 +256,10 @@ function keysPreview(raw: unknown): string {
   return ks.length ? `keys=[${ks.join(", ")}]` : "";
 }
 
-function unwrapRecord(raw: unknown, keys: string[] = ["data", "result"]): Record<string, unknown> | null {
+function unwrapRecord(
+  raw: unknown,
+  keys: string[] = ["data", "result"]
+): Record<string, unknown> | null {
   if (!isRecord(raw)) return null;
 
   const top = raw as Record<string, unknown>;
@@ -279,10 +308,18 @@ function extractArrayOrThrow<T>(
     }
   }
 
-  throw new Error(`[EDU_API] ${context}: 응답에서 배열을 찾지 못했습니다. ${keysPreview(isRecord(u) ? u : raw)}`);
+  throw new Error(
+    `[EDU_API] ${context}: 응답에서 배열을 찾지 못했습니다. ${keysPreview(
+      isRecord(u) ? u : raw
+    )}`
+  );
 }
 
-async function eduFetch<T>(url: string, init: RequestInit, context: string): Promise<T> {
+async function eduFetch<T>(
+  url: string,
+  init: RequestInit,
+  context: string
+): Promise<T> {
   const method = String(init.method ?? "GET").toUpperCase();
 
   // “fetchJson이 잠깐이라도 멈추면 짧게 끊기” → GET은 더 짧게
@@ -303,7 +340,8 @@ async function eduFetch<T>(url: string, init: RequestInit, context: string): Pro
     return r;
   } catch (e) {
     // Abort는 그대로 위로 올리되, “멈춤/네트워크” 계열은 fallback 대상으로 본다.
-    const fallbackCandidate = isAbortLikeError(e) || isTimeoutLikeError(e) || isNetworkLikeError(e);
+    const fallbackCandidate =
+      isAbortLikeError(e) || isTimeoutLikeError(e) || isNetworkLikeError(e);
 
     logDebug(`${context} primary failed`, e);
 
@@ -355,7 +393,10 @@ export async function resolveEducationVideoUrl(
   init?: Pick<RequestInit, "signal">
 ): Promise<string> {
   const raw = (fileUrl ?? "").trim();
-  if (!raw) throw new Error("[EDU_API] resolveEducationVideoUrl: fileUrl이 비어 있습니다.");
+  if (!raw)
+    throw new Error(
+      "[EDU_API] resolveEducationVideoUrl: fileUrl이 비어 있습니다."
+    );
 
   if (isPlayableUrl(raw)) return raw;
 
@@ -364,7 +405,8 @@ export async function resolveEducationVideoUrl(
 
   // 캐시 키는 objectKey로 유지 (s3://bucket/key -> bucket/key)
   const objectKey = infraPresignApi.extractS3ObjectKey(raw);
-  if (!objectKey) throw new Error("[INFRA] presign(download): objectKey 추출 실패");
+  if (!objectKey)
+    throw new Error("[INFRA] presign(download): objectKey 추출 실패");
 
   const now = Date.now();
   const cached = presignCache.get(objectKey);
@@ -386,7 +428,8 @@ export async function resolveEducationVideoUrl(
         signal: init?.signal ?? undefined, // null이면 undefined로 정규화됨
       });
 
-      if (!url) throw new Error("[INFRA] presign(download): url이 비어 있습니다.");
+      if (!url)
+        throw new Error("[INFRA] presign(download): url이 비어 있습니다.");
 
       presignCache.set(objectKey, { url, expiresAtMs });
       return { url, expiresAtMs };
@@ -493,7 +536,9 @@ function normalizeResumePositionSeconds(
   return v;
 }
 
-function normalizeVideoRecord(it: Record<string, unknown>): EducationVideoItem | null {
+function normalizeVideoRecord(
+  it: Record<string, unknown>
+): EducationVideoItem | null {
   const id = toId(it.id ?? it.videoId ?? it.video_id ?? it["video-id"]);
   if (!id) return null;
 
@@ -528,7 +573,10 @@ function normalizeVideoRecord(it: Record<string, unknown>): EducationVideoItem |
     toNumOrNull(it.resume_position) ??
     null;
 
-  const resumePositionSeconds = normalizeResumePositionSeconds(resumeRaw, durationSeconds);
+  const resumePositionSeconds = normalizeResumePositionSeconds(
+    resumeRaw,
+    durationSeconds
+  );
 
   const completed =
     toBoolOrNull(it.isCompleted) ??
@@ -538,14 +586,16 @@ function normalizeVideoRecord(it: Record<string, unknown>): EducationVideoItem |
     undefined;
 
   const totalWatchSeconds =
-    toNumOrNull(it.totalWatchSeconds) ?? toNumOrNull(it.total_watch_seconds) ?? undefined;
+    toNumOrNull(it.totalWatchSeconds) ??
+    toNumOrNull(it.total_watch_seconds) ??
+    undefined;
 
   const watchStatus =
     typeof it.watchStatus === "string"
       ? it.watchStatus
       : typeof it.status === "string"
-        ? it.status
-        : undefined;
+      ? it.status
+      : undefined;
 
   return {
     id,
@@ -560,10 +610,15 @@ function normalizeVideoRecord(it: Record<string, unknown>): EducationVideoItem |
   };
 }
 
-function buildEduQuery(params?: { completed?: boolean; eduType?: string; sort?: string }): string {
+function buildEduQuery(params?: {
+  completed?: boolean;
+  eduType?: string;
+  sort?: string;
+}): string {
   if (!params) return "";
   const q = new URLSearchParams();
-  if (params.completed !== undefined) q.set("completed", String(params.completed));
+  if (params.completed !== undefined)
+    q.set("completed", String(params.completed));
   if (params.eduType) q.set("eduType", params.eduType);
   if (params.sort) q.set("sort", params.sort);
   const s = q.toString();
@@ -577,7 +632,11 @@ export async function getMyEducations(
   const qs = buildEduQuery(params);
   const url = `${EDU_BASE}/edus/me${qs}`;
 
-  const raw = await eduFetch<unknown>(url, { method: "GET", signal: init?.signal }, "GET /edus/me");
+  const raw = await eduFetch<unknown>(
+    url,
+    { method: "GET", signal: init?.signal },
+    "GET /edus/me"
+  );
 
   const u = unwrapAny(raw);
   const list = Array.isArray(u)
@@ -593,7 +652,9 @@ export async function getMyEducations(
     .map((it): EducationItem | null => {
       if (!isRecord(it)) return null;
 
-      const id = toId(it.id ?? it.educationId ?? it.education_id ?? it["education-id"]);
+      const id = toId(
+        it.id ?? it.educationId ?? it.education_id ?? it["education-id"]
+      );
       if (!id) return null;
 
       const title =
@@ -607,25 +668,31 @@ export async function getMyEducations(
         toNumOrNull(it.edu_progress) ??
         undefined;
 
-      const watchStatus = typeof it.watchStatus === "string" ? it.watchStatus : undefined;
+      const watchStatus =
+        typeof it.watchStatus === "string" ? it.watchStatus : undefined;
 
       const completed =
         toBoolOrNull(it.eduCompleted) ??
         toBoolOrNull(it.isCompleted) ??
         toBoolOrNull(it.completed) ??
         isCompletedByStatus(it.watchStatus) ??
-        (typeof progressPercent === "number" ? progressPercent >= 100 : undefined);
+        (typeof progressPercent === "number"
+          ? progressPercent >= 100
+          : undefined);
 
       const videosRaw = (it.videos ?? it.videoList ?? it.items) as unknown;
       const videosArr = Array.isArray(videosRaw) ? videosRaw : [];
       const videos = videosArr
-        .map((v): EducationVideoItem | null => (isRecord(v) ? normalizeVideoRecord(v) : null))
+        .map((v): EducationVideoItem | null =>
+          isRecord(v) ? normalizeVideoRecord(v) : null
+        )
         .filter((v): v is EducationVideoItem => v !== null);
 
       return {
         id,
         title,
-        description: typeof it.description === "string" ? it.description : undefined,
+        description:
+          typeof it.description === "string" ? it.description : undefined,
         eduType: typeof it.eduType === "string" ? it.eduType : undefined,
         createdAt: typeof it.createdAt === "string" ? it.createdAt : undefined,
         completed,
@@ -641,8 +708,14 @@ export async function getEducationVideos(
   educationId: string | number,
   init?: Pick<RequestInit, "signal">
 ): Promise<EducationVideoItem[]> {
-  const url = `${EDU_BASE}/edu/${encodeURIComponent(String(educationId))}/videos`;
-  const raw = await eduFetch<unknown>(url, { method: "GET", signal: init?.signal }, "GET /edu/:id/videos");
+  const url = `${EDU_BASE}/edu/${encodeURIComponent(
+    String(educationId)
+  )}/videos`;
+  const raw = await eduFetch<unknown>(
+    url,
+    { method: "GET", signal: init?.signal },
+    "GET /edu/:id/videos"
+  );
 
   const list = extractArrayOrThrow<Record<string, unknown>>(
     raw,
@@ -662,9 +735,9 @@ export async function postEduVideoProgress(
   payload: EduProgressPayload,
   init?: Pick<RequestInit, "signal" | "keepalive">
 ): Promise<EduProgressResponse | null> {
-  const url = `${EDU_BASE}/edu/${encodeURIComponent(String(educationId))}/video/${encodeURIComponent(
-    String(videoId)
-  )}/progress`;
+  const url = `${EDU_BASE}/edu/${encodeURIComponent(
+    String(educationId)
+  )}/video/${encodeURIComponent(String(videoId))}/progress`;
 
   const raw = await eduFetch<unknown>(
     url,
@@ -681,7 +754,8 @@ export async function postEduVideoProgress(
   const dto = unwrapRecord(raw);
   if (!dto) return null;
 
-  const progressPercent = toNumOrNull(dto.progressPercent) ?? toNumOrNull(dto.progress) ?? undefined;
+  const progressPercent =
+    toNumOrNull(dto.progressPercent) ?? toNumOrNull(dto.progress) ?? undefined;
 
   const videoCompleted =
     toBoolOrNull(dto.videoCompleted) ??
@@ -689,23 +763,31 @@ export async function postEduVideoProgress(
     (typeof progressPercent === "number" ? progressPercent >= 100 : undefined);
 
   const eduCompleted =
-    toBoolOrNull(dto.eduCompleted) ?? toBoolOrNull(dto.educationCompleted) ?? undefined;
+    toBoolOrNull(dto.eduCompleted) ??
+    toBoolOrNull(dto.educationCompleted) ??
+    undefined;
 
   const eduProgressPercent =
     toNumOrNull(dto.eduProgress) ?? toNumOrNull(dto.edu_progress) ?? undefined;
 
   const totalWatchSeconds =
-    toNumOrNull(dto.totalWatchSeconds) ?? toNumOrNull(dto.total_watch_seconds) ?? undefined;
+    toNumOrNull(dto.totalWatchSeconds) ??
+    toNumOrNull(dto.total_watch_seconds) ??
+    undefined;
 
   // resumePosition은 ms로 오는 케이스/음수/비정상값 방어
-  const durationSeconds = toNumOrNull(dto.durationSeconds ?? dto.duration ?? dto.duration_sec) ?? undefined;
+  const durationSeconds =
+    toNumOrNull(dto.durationSeconds ?? dto.duration ?? dto.duration_sec) ??
+    undefined;
   const resumeRaw =
     toNumOrNull(dto.resumePositionSeconds) ??
     toNumOrNull(dto.resumePosition) ??
     toNumOrNull(dto.resumeSeconds) ??
     payload.position;
 
-  const resumePositionSeconds = normalizeResumePositionSeconds(resumeRaw, durationSeconds) ?? payload.position;
+  const resumePositionSeconds =
+    normalizeResumePositionSeconds(resumeRaw, durationSeconds) ??
+    payload.position;
 
   return {
     progressPercent,
@@ -721,8 +803,14 @@ export async function completeEducation(
   educationId: string | number,
   init?: Pick<RequestInit, "signal">
 ): Promise<unknown | null> {
-  const url = `${EDU_BASE}/edu/${encodeURIComponent(String(educationId))}/complete`;
-  return await eduFetch<unknown | null>(url, { method: "POST", signal: init?.signal }, "POST /edu/:id/complete");
+  const url = `${EDU_BASE}/edu/${encodeURIComponent(
+    String(educationId)
+  )}/complete`;
+  return await eduFetch<unknown | null>(
+    url,
+    { method: "POST", signal: init?.signal },
+    "POST /edu/:id/complete"
+  );
 }
 
 /* =========================
@@ -850,7 +938,10 @@ function isAvailEduItem(x: unknown): x is Record<string, unknown> {
   if (!isRecord(x)) return false;
   const id = x.educationId ?? x.education_id ?? x["education-id"];
   const title = x.title ?? x.educationTitle ?? x.name;
-  return (typeof id === "string" || typeof id === "number") && typeof title === "string";
+  return (
+    (typeof id === "string" || typeof id === "number") &&
+    typeof title === "string"
+  );
 }
 
 function isAttemptItem(x: unknown): x is Record<string, unknown> {
@@ -864,13 +955,27 @@ function isWrongItem(x: unknown): x is Record<string, unknown> {
   return typeof x.question === "string";
 }
 
-export async function getQuizDepartmentStats(init?: Pick<RequestInit, "signal">): Promise<QuizDepartmentStat[]> {
+export async function getQuizDepartmentStats(
+  init?: Pick<RequestInit, "signal">
+): Promise<QuizDepartmentStat[]> {
   const url = `${EDU_BASE}/quiz/department-stats`;
-  const raw = await eduFetch<unknown>(url, { method: "GET", signal: init?.signal }, "GET /quiz/department-stats");
+  const raw = await eduFetch<unknown>(
+    url,
+    { method: "GET", signal: init?.signal },
+    "GET /quiz/department-stats"
+  );
 
   const list = extractArrayOrThrow<Record<string, unknown>>(
     raw,
-    ["departmentStats", "department_stats", "stats", "items", "list", "data", "result"],
+    [
+      "departmentStats",
+      "department_stats",
+      "stats",
+      "items",
+      "list",
+      "data",
+      "result",
+    ],
     isDeptStatItem,
     "GET /quiz/department-stats"
   );
@@ -878,32 +983,56 @@ export async function getQuizDepartmentStats(init?: Pick<RequestInit, "signal">)
   return list
     .map((it): QuizDepartmentStat | null => {
       const departmentName =
-        (typeof it.departmentName === "string" && it.departmentName) || (typeof it.name === "string" && it.name) || "";
+        (typeof it.departmentName === "string" && it.departmentName) ||
+        (typeof it.name === "string" && it.name) ||
+        "";
       if (!departmentName) return null;
 
       const averageScore = toNumOrNull(it.averageScore) ?? 0;
       const progressPercent = toNumOrNull(it.progressPercent) ?? 0;
       const participantCount = toNumOrNull(it.participantCount) ?? 0;
 
-      return { departmentName, averageScore, progressPercent, participantCount };
+      return {
+        departmentName,
+        averageScore,
+        progressPercent,
+        participantCount,
+      };
     })
     .filter((v): v is QuizDepartmentStat => v !== null);
 }
 
-export async function getQuizAvailableEducations(init?: Pick<RequestInit, "signal">): Promise<QuizAvailableEducation[]> {
+export async function getQuizAvailableEducations(
+  init?: Pick<RequestInit, "signal">
+): Promise<QuizAvailableEducation[]> {
   const url = `${EDU_BASE}/quiz/available-educations`;
-  const raw = await eduFetch<unknown>(url, { method: "GET", signal: init?.signal }, "GET /quiz/available-educations");
+  const raw = await eduFetch<unknown>(
+    url,
+    { method: "GET", signal: init?.signal },
+    "GET /quiz/available-educations"
+  );
 
   const list = extractArrayOrThrow<Record<string, unknown>>(
     raw,
-    ["availableEducations", "available_educations", "educations", "educationList", "items", "list", "data", "result"],
+    [
+      "availableEducations",
+      "available_educations",
+      "educations",
+      "educationList",
+      "items",
+      "list",
+      "data",
+      "result",
+    ],
     isAvailEduItem,
     "GET /quiz/available-educations"
   );
 
   return list
     .map((it): QuizAvailableEducation | null => {
-      const educationId = toId(it.educationId ?? it.education_id ?? it["education-id"]);
+      const educationId = toId(
+        it.educationId ?? it.education_id ?? it["education-id"]
+      );
       if (!educationId) return null;
 
       const title =
@@ -923,11 +1052,12 @@ export async function getQuizAvailableEducations(init?: Pick<RequestInit, "signa
         typeof it.category === "string"
           ? it.category
           : typeof it.eduCategory === "string"
-            ? it.eduCategory
-            : null;
+          ? it.eduCategory
+          : null;
 
       const eduType = typeof it.eduType === "string" ? it.eduType : null;
-      const educationStatus = typeof it.educationStatus === "string" ? it.educationStatus : null;
+      const educationStatus =
+        typeof it.educationStatus === "string" ? it.educationStatus : null;
 
       return {
         educationId,
@@ -949,14 +1079,24 @@ export async function startQuiz(
   educationId: string | number,
   init?: Pick<RequestInit, "signal">
 ): Promise<QuizStartResponse> {
-  const url = `${EDU_BASE}/quiz/${encodeURIComponent(String(educationId))}/start`;
-  const raw = await eduFetch<unknown>(url, { method: "GET", signal: init?.signal }, "GET /quiz/:educationId/start");
+  const url = `${EDU_BASE}/quiz/${encodeURIComponent(
+    String(educationId)
+  )}/start`;
+  const raw = await eduFetch<unknown>(
+    url,
+    { method: "GET", signal: init?.signal },
+    "GET /quiz/:educationId/start"
+  );
 
   const dto = unwrapRecord(raw);
-  if (!dto) throw new Error("[EDU_API] startQuiz: 응답 형식이 올바르지 않습니다.");
+  if (!dto)
+    throw new Error("[EDU_API] startQuiz: 응답 형식이 올바르지 않습니다.");
 
-  const attemptId = toId(dto.attemptId ?? dto["attempt_id"] ?? dto["attempt-id"]);
-  if (!attemptId) throw new Error("[EDU_API] startQuiz: attemptId가 누락되었습니다.");
+  const attemptId = toId(
+    dto.attemptId ?? dto["attempt_id"] ?? dto["attempt-id"]
+  );
+  if (!attemptId)
+    throw new Error("[EDU_API] startQuiz: attemptId가 누락되었습니다.");
 
   const qList = extractArrayOrThrow<Record<string, unknown>>(
     dto,
@@ -979,20 +1119,32 @@ export async function startQuiz(
         "";
 
       const choicesRaw = q.choices;
-      const choices = Array.isArray(choicesRaw) ? (choicesRaw.filter((x) => typeof x === "string") as string[]) : [];
+      const choices = Array.isArray(choicesRaw)
+        ? (choicesRaw.filter((x) => typeof x === "string") as string[])
+        : [];
 
       const userSelectedIndex = toNumOrNull(q.userSelectedIndex);
       const answerIndex = toNumOrNull(q.answerIndex);
       const correctOption = toNumOrNull(q.correctOption);
 
-      return { questionId, order, question, choices, userSelectedIndex, answerIndex, correctOption };
+      return {
+        questionId,
+        order,
+        question,
+        choices,
+        userSelectedIndex,
+        answerIndex,
+        correctOption,
+      };
     })
     .filter((v): v is QuizQuestionItem => v !== null);
 
   const savedAnswersRaw = (() => {
     const u = unwrapAny(dto);
     if (!isRecord(u)) return [];
-    const v = (u.savedAnswers ?? (u as Record<string, unknown>)["saved_answers"] ?? u.answers) as unknown;
+    const v = (u.savedAnswers ??
+      (u as Record<string, unknown>)["saved_answers"] ??
+      u.answers) as unknown;
     return Array.isArray(v) ? v : [];
   })();
 
@@ -1004,9 +1156,15 @@ export async function startQuiz(
       if (!questionId || idx === null) return null;
       return { questionId, userSelectedIndex: idx };
     })
-    .filter((v): v is { questionId: string; userSelectedIndex: number } => v !== null);
+    .filter(
+      (v): v is { questionId: string; userSelectedIndex: number } => v !== null
+    );
 
-  const merged: Record<string, unknown> = { ...(dto as Record<string, unknown>), attemptId, questions };
+  const merged: Record<string, unknown> = {
+    ...(dto as Record<string, unknown>),
+    attemptId,
+    questions,
+  };
   if (savedAnswers.length) merged.savedAnswers = savedAnswers;
 
   return merged as unknown as QuizStartResponse;
@@ -1017,16 +1175,23 @@ export async function getQuizTimer(
   init?: Pick<RequestInit, "signal">
 ): Promise<QuizTimerResponse> {
   const candidates = [
-    `${EDU_BASE}/quiz/attempt/${encodeURIComponent(String(attemptId))}/timer`
+    `${EDU_BASE}/quiz/attempt/${encodeURIComponent(String(attemptId))}/timer`,
   ];
 
   let lastErr: unknown = null;
   for (const url of candidates) {
     try {
-      const raw = await eduFetch<unknown>(url, { method: "GET", signal: init?.signal }, "GET /quiz/attempt/:id/timer");
+      const raw = await eduFetch<unknown>(
+        url,
+        { method: "GET", signal: init?.signal },
+        "GET /quiz/attempt/:id/timer"
+      );
 
       const dto = unwrapRecord(raw);
-      if (!dto) throw new Error("[EDU_API] getQuizTimer: 응답 형식이 올바르지 않습니다.");
+      if (!dto)
+        throw new Error(
+          "[EDU_API] getQuizTimer: 응답 형식이 올바르지 않습니다."
+        );
 
       const timeLimit = toNumOrNull(dto.timeLimit) ?? 0;
       const startedAt = typeof dto.startedAt === "string" ? dto.startedAt : "";
@@ -1146,7 +1311,10 @@ export async function submitQuizAnswers(
       );
 
       const dto = unwrapRecord(raw);
-      if (!dto) throw new Error("[EDU_API] submitQuizAnswers: 응답 형식이 올바르지 않습니다.");
+      if (!dto)
+        throw new Error(
+          "[EDU_API] submitQuizAnswers: 응답 형식이 올바르지 않습니다."
+        );
 
       const score = toNumOrNull(dto.score);
       const passed = toBoolOrNull(dto.passed);
@@ -1154,15 +1322,31 @@ export async function submitQuizAnswers(
       const wrongCount = toNumOrNull(dto.wrongCount);
       const totalCount = toNumOrNull(dto.totalCount);
 
-      if (score === null || passed === null || correctCount === null || wrongCount === null || totalCount === null) {
+      if (
+        score === null ||
+        passed === null ||
+        correctCount === null ||
+        wrongCount === null ||
+        totalCount === null
+      ) {
         throw new Error(
-          `[EDU_API] submitQuizAnswers: 필수 필드 누락 (score/passed/correctCount/wrongCount/totalCount). ${keysPreview(dto)}`
+          `[EDU_API] submitQuizAnswers: 필수 필드 누락 (score/passed/correctCount/wrongCount/totalCount). ${keysPreview(
+            dto
+          )}`
         );
       }
 
-      const submittedAt = typeof dto.submittedAt === "string" ? dto.submittedAt : undefined;
+      const submittedAt =
+        typeof dto.submittedAt === "string" ? dto.submittedAt : undefined;
 
-      return { score, passed, correctCount, wrongCount, totalCount, submittedAt };
+      return {
+        score,
+        passed,
+        correctCount,
+        wrongCount,
+        totalCount,
+        submittedAt,
+      };
     } catch (e) {
       lastErr = e;
     }
@@ -1178,7 +1362,9 @@ export async function getQuizEducationAttempts(
     `${EDU_BASE}/quiz/${encodeURIComponent(String(educationId))}/my-attempts`,
     `${EDU_BASE}/quiz/${encodeURIComponent(String(educationId))}/my_attempts`,
     `${EDU_BASE}/quiz/${encodeURIComponent(String(educationId))}/attempts`,
-    `${EDU_BASE}/quiz/education/${encodeURIComponent(String(educationId))}/my-attempts`,
+    `${EDU_BASE}/quiz/education/${encodeURIComponent(
+      String(educationId)
+    )}/my-attempts`,
   ];
 
   let lastErr: unknown = null;
@@ -1192,23 +1378,38 @@ export async function getQuizEducationAttempts(
 
       const list = extractArrayOrThrow<Record<string, unknown>>(
         raw,
-        ["myAttempts", "my_attempts", "my-attempts", "attempts", "items", "list", "data", "result"],
+        [
+          "myAttempts",
+          "my_attempts",
+          "my-attempts",
+          "attempts",
+          "items",
+          "list",
+          "data",
+          "result",
+        ],
         isAttemptItem,
         "GET /quiz/:educationId/my-attempts"
       );
 
       return list
         .map((it): QuizAttemptSummary | null => {
-          const attemptId = toId(it.attemptId ?? it.attempt_id ?? it["attempt-id"]);
-          const attemptNo = toNumOrNull(it.attemptNo ?? it.attempt_no ?? it["attempt-no"]);
+          const attemptId = toId(
+            it.attemptId ?? it.attempt_id ?? it["attempt-id"]
+          );
+          const attemptNo = toNumOrNull(
+            it.attemptNo ?? it.attempt_no ?? it["attempt-no"]
+          );
           const status = typeof it.status === "string" ? it.status : "";
           if (!attemptId || attemptNo === null) return null;
 
           const score = toNumOrNull(it.score);
           const passed = toBoolOrNull(it.passed);
 
-          const startedAt = typeof it.startedAt === "string" ? it.startedAt : undefined;
-          const submittedAt = typeof it.submittedAt === "string" ? it.submittedAt : undefined;
+          const startedAt =
+            typeof it.startedAt === "string" ? it.startedAt : undefined;
+          const submittedAt =
+            typeof it.submittedAt === "string" ? it.submittedAt : undefined;
 
           return {
             attemptId,
@@ -1250,20 +1451,32 @@ export async function getQuizRetryInfo(
       );
 
       const dto = unwrapRecord(raw);
-      if (!dto) throw new Error("[EDU_API] getQuizRetryInfo: 응답 형식이 올바르지 않습니다.");
+      if (!dto)
+        throw new Error(
+          "[EDU_API] getQuizRetryInfo: 응답 형식이 올바르지 않습니다."
+        );
 
-      const canRetry = toBoolOrNull(dto.canRetry ?? dto.isRetryable ?? dto.available);
+      const canRetry = toBoolOrNull(
+        dto.canRetry ?? dto.isRetryable ?? dto.available
+      );
       const currentAttemptCount = toNumOrNull(
-        dto.currentAttemptCount ?? dto.current_attempt_count ?? dto.usedAttempts ?? dto.used
+        dto.currentAttemptCount ??
+          dto.current_attempt_count ??
+          dto.usedAttempts ??
+          dto.used
       );
       const maxAttempts = toNumOrNull(dto.maxAttempts ?? dto.max_attempts);
-      const remainingAttempts = toNumOrNull(dto.remainingAttempts ?? dto.remaining_attempts ?? dto.left);
+      const remainingAttempts = toNumOrNull(
+        dto.remainingAttempts ?? dto.remaining_attempts ?? dto.left
+      );
       const bestScore = toNumOrNull(dto.bestScore ?? dto.best_score);
       const passed = toBoolOrNull(dto.passed);
 
       if (canRetry === null || currentAttemptCount === null) {
         throw new Error(
-          `[EDU_API] getQuizRetryInfo: 필수 필드 누락 (canRetry/currentAttemptCount). ${keysPreview(dto)}`
+          `[EDU_API] getQuizRetryInfo: 필수 필드 누락 (canRetry/currentAttemptCount). ${keysPreview(
+            dto
+          )}`
         );
       }
 
@@ -1296,7 +1509,11 @@ export async function getQuizWrongs(
   let lastErr: unknown = null;
   for (const url of candidates) {
     try {
-      const raw = await eduFetch<unknown>(url, { method: "GET", signal: init?.signal }, "GET /quiz/attempt/:id/wrongs");
+      const raw = await eduFetch<unknown>(
+        url,
+        { method: "GET", signal: init?.signal },
+        "GET /quiz/attempt/:id/wrongs"
+      );
 
       const list = extractArrayOrThrow<Record<string, unknown>>(
         raw,
@@ -1307,10 +1524,14 @@ export async function getQuizWrongs(
 
       return list.map((it) => ({
         question: typeof it.question === "string" ? it.question : "",
-        userAnswerIndex: toNumOrNull(it.userAnswerIndex ?? it.user_answer_index) ?? -1,
-        correctAnswerIndex: toNumOrNull(it.correctAnswerIndex ?? it.correct_answer_index) ?? -1,
+        userAnswerIndex:
+          toNumOrNull(it.userAnswerIndex ?? it.user_answer_index) ?? -1,
+        correctAnswerIndex:
+          toNumOrNull(it.correctAnswerIndex ?? it.correct_answer_index) ?? -1,
         explanation: typeof it.explanation === "string" ? it.explanation : "",
-        choices: Array.isArray(it.choices) ? (it.choices.filter((x) => typeof x === "string") as string[]) : [],
+        choices: Array.isArray(it.choices)
+          ? (it.choices.filter((x) => typeof x === "string") as string[])
+          : [],
       }));
     } catch (e) {
       lastErr = e;
@@ -1351,7 +1572,8 @@ export async function postQuizLeave(
 
       const recorded = (toBoolOrNull(dto.recorded) ?? true) as boolean;
       const leaveCount = toNumOrNull(dto.leaveCount) ?? undefined;
-      const lastLeaveAt = typeof dto.lastLeaveAt === "string" ? dto.lastLeaveAt : undefined;
+      const lastLeaveAt =
+        typeof dto.lastLeaveAt === "string" ? dto.lastLeaveAt : undefined;
 
       return { recorded, leaveCount, lastLeaveAt };
     } catch (e) {

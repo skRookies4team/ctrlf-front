@@ -1,4 +1,4 @@
-// src/components/chatbot/adminDashboardTypes.ts
+// src/components/dashboard/adminDashboardTypes.ts
 import type { PeriodPreset } from "./adminFilterTypes";
 
 /**
@@ -95,7 +95,6 @@ export interface DeptQuizScoreRow {
 export interface QuizSummaryRow {
   id: string;
   quizTitle: string;
-  round: number;
   avgScore: number;
   participantCount: number;
   passRate: number; // %

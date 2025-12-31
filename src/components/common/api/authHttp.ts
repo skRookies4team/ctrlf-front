@@ -1,5 +1,5 @@
 // src/components/chatbot/authHttp.ts
-import keycloak from "../../keycloak";
+import keycloak from "../../../keycloak";
 
 type JsonLike = unknown;
 
@@ -33,7 +33,10 @@ async function sleep(ms: number) {
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   let t: number | undefined;
   const timeout = new Promise<never>((_, reject) => {
-    t = window.setTimeout(() => reject(new Error(`${label}: timeout after ${ms}ms`)), ms);
+    t = window.setTimeout(
+      () => reject(new Error(`${label}: timeout after ${ms}ms`)),
+      ms
+    );
   });
 
   return Promise.race([
@@ -58,7 +61,11 @@ async function waitTokenReady(timeoutMs = 6_000, pollMs = 200): Promise<void> {
 
     // token이 없으면 updateToken(0)로 유도 (단, 무한대기 방지)
     try {
-      await withTimeout(Promise.resolve(keycloak.updateToken(0)), 2_500, "keycloak.updateToken(0)");
+      await withTimeout(
+        Promise.resolve(keycloak.updateToken(0)),
+        2_500,
+        "keycloak.updateToken(0)"
+      );
       if (keycloak.token) return;
     } catch {
       // ignore
@@ -68,7 +75,9 @@ async function waitTokenReady(timeoutMs = 6_000, pollMs = 200): Promise<void> {
   }
 }
 
-export async function getAccessToken(minValiditySeconds: number = 30): Promise<string | null> {
+export async function getAccessToken(
+  minValiditySeconds: number = 30
+): Promise<string | null> {
   if (!keycloak?.authenticated) return null;
 
   // authenticated인데 token이 늦게 세팅되는 케이스 방지
@@ -102,7 +111,9 @@ export async function getAccessToken(minValiditySeconds: number = 30): Promise<s
   return keycloak.token ?? null;
 }
 
-export async function withAuthHeaders(headers?: HeadersInit): Promise<Record<string, string>> {
+export async function withAuthHeaders(
+  headers?: HeadersInit
+): Promise<Record<string, string>> {
   const merged = headersToObject(headers);
 
   const token = await getAccessToken(30);
@@ -185,7 +196,10 @@ function canRetryWithSameBody(init: RequestInit): boolean {
   return false;
 }
 
-export async function fetchJson<T>(url: string, init: RequestInit = {}): Promise<T> {
+export async function fetchJson<T>(
+  url: string,
+  init: RequestInit = {}
+): Promise<T> {
   const dedupeKey = makeDedupeKey(url, init);
 
   if (dedupeKey) {
@@ -199,7 +213,10 @@ export async function fetchJson<T>(url: string, init: RequestInit = {}): Promise
     // 401이면 1회 강제 토큰 갱신 후 재시도(무한루프 방지)
     let retried401 = false;
 
-    const doFetchOnce = async (): Promise<{ res: Response; body: JsonLike }> => {
+    const doFetchOnce = async (): Promise<{
+      res: Response;
+      body: JsonLike;
+    }> => {
       const headers = await withAuthHeaders(init.headers);
       const res = await fetch(url, { ...init, headers });
       const body = await readBodySafe(res);
@@ -223,7 +240,11 @@ export async function fetchJson<T>(url: string, init: RequestInit = {}): Promise
         retried401 = true;
         try {
           // 강제 갱신 (hang 방지 포함)
-          await withTimeout(Promise.resolve(keycloak.updateToken(0)), 5_000, "keycloak.updateToken(0) retry");
+          await withTimeout(
+            Promise.resolve(keycloak.updateToken(0)),
+            5_000,
+            "keycloak.updateToken(0) retry"
+          );
         } catch {
           // ignore
         }

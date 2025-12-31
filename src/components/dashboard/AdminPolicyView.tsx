@@ -6,7 +6,7 @@ import React, {
   useState,
   useSyncExternalStore,
 } from "react";
-import "./chatbot.css";
+import "../chatbot/chatbot.css";
 import {
   PolicyStoreError,
   type PolicyDocGroup,
@@ -24,138 +24,10 @@ import {
   submitReviewRequest,
   softDelete,
   suggestNextVersion,
-} from "./policyStore";
+} from "../chatbot/policyStore";
 import ProjectFilesModal, {
   type ProjectFileItem,
-  type AddFilesOutcome,
-} from "./ProjectFilesModal";
-import { fetchJson, HttpError } from "./authHttp";
-
-const INFRA_BASE =
-  import.meta.env.VITE_INFRA_API_BASE?.toString().trim() || "/api-infra";
-
-type PresignUploadResp = {
-  url?: string;
-  putUrl?: string;
-  presignedUrl?: string;
-  uploadUrl?: string;
-  key?: string;
-  objectKey?: string;
-  headers?: Record<string, string> | null;
-  requiredHeaders?: Record<string, string> | null;
-};
-
-function pickPresignUrl(r: PresignUploadResp): string {
-  const u = r.url || r.putUrl || r.presignedUrl || r.uploadUrl;
-  if (!u) throw new Error("Presign 응답에 업로드 URL이 없습니다.");
-  return u;
-}
-
-function normalizeHeaderRecord(
-  v: PresignUploadResp["headers"] | PresignUploadResp["requiredHeaders"]
-): Record<string, string> | undefined {
-  if (!v) return undefined;
-  const out: Record<string, string> = {};
-  for (const [k, val] of Object.entries(v)) {
-    if (typeof val === "string") out[k] = val;
-  }
-  return Object.keys(out).length ? out : undefined;
-}
-
-async function putToPresignedUrlDirect(
-  url: string,
-  file: File,
-  headers?: Record<string, string>
-): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open("PUT", url, true);
-    xhr.timeout = 120_000;
-
-    // S3 presigned PUT에는 Authorization 등 커스텀 헤더를 붙이지 않는다.
-    const forbidden = new Set(["authorization", "content-length", "host"]);
-
-    if (headers) {
-      for (const [k, v] of Object.entries(headers)) {
-        const lk = k.toLowerCase();
-        if (!k) continue;
-        if (forbidden.has(lk)) continue;
-
-        try {
-          xhr.setRequestHeader(k, v);
-        } catch {
-          // 브라우저가 금지한 헤더는 무시
-        }
-      }
-    }
-
-    xhr.onload = () => {
-      const ok = xhr.status >= 200 && xhr.status < 300;
-      if (ok) resolve();
-      else reject(new Error(`S3 PUT 실패 (status=${xhr.status})`));
-    };
-    xhr.onerror = () => reject(new Error("S3 PUT 네트워크 오류"));
-    xhr.ontimeout = () => reject(new Error("S3 PUT 타임아웃"));
-    xhr.send(file);
-  });
-}
-
-async function putToPresignedUrlViaProxy(url: string, file: File): Promise<void> {
-  // 백엔드가 “presigned url로 대신 PUT”해주는 폴백 엔드포인트
-  const proxy = `${INFRA_BASE}/infra/files/presign/upload/put?url=${encodeURIComponent(
-    url
-  )}`;
-  await fetchJson<unknown>(proxy, { method: "PUT", body: file });
-}
-
-async function uploadDocFileWithPresign(file: File): Promise<void> {
-  const endpoint = `${INFRA_BASE}/infra/files/presign/upload`;
-
-  // 백엔드 구현 흔들림을 흡수하기 위해 필드명은 넓게 보낸다.
-  const payload = {
-    type: "docs",
-    filename: file.name,
-    fileName: file.name,
-    contentType: file.type || undefined,
-    mimeType: file.type || undefined,
-    sizeBytes: file.size,
-    size: file.size,
-  };
-
-  const presign = await fetchJson<PresignUploadResp>(endpoint, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-
-  const putUrl = pickPresignUrl(presign);
-  const headers = normalizeHeaderRecord(presign.headers ?? presign.requiredHeaders);
-
-  try {
-    await putToPresignedUrlDirect(putUrl, file, headers);
-  } catch {
-    // direct PUT 실패 시(주로 CORS/네트워크) 프록시 PUT 폴백
-    await putToPresignedUrlViaProxy(putUrl, file);
-  }
-}
-
-function makeFileKey(name: string, size: number) {
-  const s = Number.isFinite(size) ? size : 0;
-  return `${name}__${s}`;
-}
-
-function mapUploadErrorMessage(err: unknown): string {
-  if (err instanceof PolicyStoreError) {
-    return mapPolicyError(err).message;
-  }
-  if (err instanceof HttpError) {
-    // presign/proxy 호출 실패
-    if (typeof err.body === "string" && err.body.trim()) return err.body;
-    return `요청 실패: ${err.status} ${err.statusText}`;
-  }
-  if (err instanceof Error) return err.message;
-  return "업로드 실패(알 수 없음)";
-}
+} from "../chatbot/ProjectFilesModal";
 
 function cx(...tokens: Array<string | false | null | undefined>) {
   return tokens.filter(Boolean).join(" ");
@@ -223,14 +95,20 @@ function mapPolicyError(err: unknown): {
       return { tone: "warn", message: "동일한 파일이 이미 등록되어 있습니다." };
 
     if (err.status === 409)
-      return { tone: "warn", message: err.message || "처리할 수 없는 상태입니다." };
+      return {
+        tone: "warn",
+        message: err.message || "처리할 수 없는 상태입니다.",
+      };
     if (err.status >= 500)
       return {
         tone: "danger",
         message: "처리가 실패했습니다. 다시 시도하거나 관리자에게 문의",
       };
 
-    return { tone: "warn", message: err.message || "요청을 처리할 수 없습니다." };
+    return {
+      tone: "warn",
+      message: err.message || "요청을 처리할 수 없습니다.",
+    };
   }
   return {
     tone: "danger",
@@ -244,7 +122,7 @@ function StatusPill({ status }: { status: PolicyDocStatus }) {
       className={cx(
         "cb-reviewer-pill",
         `cb-reviewer-pill--${statusTone(status)}`,
-        `cb-reviewer-pill--status-${status}`,
+        `cb-reviewer-pill--status-${status}`
       )}
     >
       {statusLabel(status)}
@@ -346,10 +224,10 @@ function buildGroupMetaChips(g: PolicyDocGroup): MetaChip[] {
   const activeChip: MetaChip = active
     ? { key: "active", label: `ACTIVE v${active.version}` }
     : {
-      key: "active-none",
-      label: "ACTIVE 없음",
-      className: "cb-policy-meta-chip--muted",
-    };
+        key: "active-none",
+        label: "ACTIVE 없음",
+        className: "cb-policy-meta-chip--muted",
+      };
 
   const draftChip: MetaChip | null = draft
     ? { key: "draft", label: `DRAFT v${draft.version}` }
@@ -361,23 +239,27 @@ function buildGroupMetaChips(g: PolicyDocGroup): MetaChip[] {
 
   const rejectedChip: MetaChip | null = rejected
     ? {
-      key: "rejected",
-      label: `REJECTED v${rejected.version}`,
-      className: "cb-policy-meta-chip--danger",
-    }
+        key: "rejected",
+        label: `REJECTED v${rejected.version}`,
+        className: "cb-policy-meta-chip--danger",
+      }
     : null;
 
   const archivedChip: MetaChip | null =
     archivedCount > 0
       ? {
-        key: "archived",
-        label: `ARCHIVED ${archivedCount}`,
-        className: "cb-policy-meta-chip--muted",
-      }
+          key: "archived",
+          label: `ARCHIVED ${archivedCount}`,
+          className: "cb-policy-meta-chip--muted",
+        }
       : null;
 
   const deletedChip: MetaChip | null = deleted
-    ? { key: "deleted", label: "DELETED", className: "cb-policy-meta-chip--danger" }
+    ? {
+        key: "deleted",
+        label: "DELETED",
+        className: "cb-policy-meta-chip--danger",
+      }
     : null;
 
   const totalChip: MetaChip = {
@@ -447,7 +329,13 @@ function getGroupActionButtonState(g: PolicyDocGroup): {
 } {
   const show = canShowGroupActionButton(g);
   if (!show) {
-    return { show: false, label: "개정안", disabled: true, title: "", mode: "NONE" };
+    return {
+      show: false,
+      label: "개정안",
+      disabled: true,
+      title: "",
+      mode: "NONE",
+    };
   }
 
   if (g.pending) {
@@ -465,12 +353,18 @@ function getGroupActionButtonState(g: PolicyDocGroup): {
       show: true,
       label: "개정안",
       disabled: false,
-      title: "이미 개정안(초안)이 있습니다. 클릭하면 해당 개정안으로 이동합니다.",
+      title:
+        "이미 개정안(초안)이 있습니다. 클릭하면 해당 개정안으로 이동합니다.",
       mode: "GOTO_DRAFT",
     };
   }
 
-  if (g.deleted && !g.active && !g.rejected && (!g.archived || g.archived.length === 0)) {
+  if (
+    g.deleted &&
+    !g.active &&
+    !g.rejected &&
+    (!g.archived || g.archived.length === 0)
+  ) {
     return {
       show: true,
       label: "개정안",
@@ -491,21 +385,31 @@ function getGroupActionButtonState(g: PolicyDocGroup): {
   };
 }
 
-function defaultRightTabForStatus(status: PolicyDocStatus | null | undefined): RightTab {
+function defaultRightTabForStatus(
+  status: PolicyDocStatus | null | undefined
+): RightTab {
   if (status === "DRAFT") return "DRAFT";
   if (status === "PENDING_REVIEWER") return "REVIEW";
   return "OVERVIEW";
 }
 
 export default function AdminPolicyView() {
-  const groups = useSyncExternalStore(subscribePolicyStore, listPolicyGroupsSnapshot);
-  const versions = useSyncExternalStore(subscribePolicyStore, listPolicyVersionsSnapshot);
+  const groups = useSyncExternalStore(
+    subscribePolicyStore,
+    listPolicyGroupsSnapshot
+  );
+  const versions = useSyncExternalStore(
+    subscribePolicyStore,
+    listPolicyVersionsSnapshot
+  );
 
   const [toast, setToast] = useState<Toast>({ open: false });
   const toastTimerRef = useRef<number | null>(null);
 
   const [q, setQ] = useState("");
-  const [statusFilter, setStatusFilter] = useState<PolicyDocStatus | "ALL">("ALL");
+  const [statusFilter, setStatusFilter] = useState<PolicyDocStatus | "ALL">(
+    "ALL"
+  );
 
   const [includeArchived, setIncludeArchived] = useState(false);
   const [includeDeleted, setIncludeDeleted] = useState(false);
@@ -587,7 +491,10 @@ export default function AdminPolicyView() {
   const showToast = (tone: "neutral" | "warn" | "danger", message: string) => {
     setToast({ open: true, tone, message });
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
-    toastTimerRef.current = window.setTimeout(() => setToast({ open: false }), 2400);
+    toastTimerRef.current = window.setTimeout(
+      () => setToast({ open: false }),
+      2400
+    );
   };
 
   useEffect(() => {
@@ -625,7 +532,12 @@ export default function AdminPolicyView() {
         changeSummary: v.changeSummary,
       });
     } else {
-      setDraftForm({ documentId: "", title: "", version: "", changeSummary: "" });
+      setDraftForm({
+        documentId: "",
+        title: "",
+        version: "",
+        changeSummary: "",
+      });
     }
 
     // 체크리스트는 선택 변경 시 초기화(요구사항)
@@ -675,20 +587,26 @@ export default function AdminPolicyView() {
       if (!canShowGroupActionButton(g)) {
         showToast(
           "warn",
-          "해당 문서는 아직 적용/검토 이력이 없어 개정안(초안)을 만들 수 없습니다.",
+          "해당 문서는 아직 적용/검토 이력이 없어 개정안(초안)을 만들 수 없습니다."
         );
         return;
       }
 
       if (g.pending) {
-        showToast("warn", "검토 대기(PENDING) 문서입니다. ‘검토안’으로 내용을 확인하세요.");
+        showToast(
+          "warn",
+          "검토 대기(PENDING) 문서입니다. ‘검토안’으로 내용을 확인하세요."
+        );
         selectVersion(g.pending);
         return;
       }
 
       if (g.draft) {
         selectVersion(g.draft);
-        showToast("warn", "이미 개정안(초안)이 있습니다. 해당 개정안을 수정해주세요.");
+        showToast(
+          "warn",
+          "이미 개정안(초안)이 있습니다. 해당 개정안을 수정해주세요."
+        );
         return;
       }
 
@@ -796,7 +714,12 @@ export default function AdminPolicyView() {
 
       setRightTab("REVIEW");
       setReviewCheck({ checkedBasics: false, checkedPreview: false });
-      setDraftForm({ documentId: "", title: "", version: "", changeSummary: "" });
+      setDraftForm({
+        documentId: "",
+        title: "",
+        version: "",
+        changeSummary: "",
+      });
 
       showToast("neutral", "검토 요청을 전송했습니다.");
     } catch (e) {
@@ -806,7 +729,9 @@ export default function AdminPolicyView() {
   };
 
   // (4) 삭제 사유 모달 (DoD)
-  const [deleteModal, setDeleteModal] = useState<DeleteModalState>({ open: false });
+  const [deleteModal, setDeleteModal] = useState<DeleteModalState>({
+    open: false,
+  });
   const deleteTextareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   const openDeleteModal = () => {
@@ -843,7 +768,7 @@ export default function AdminPolicyView() {
     const reason = deleteModal.reason.trim();
     if (!reason) {
       setDeleteModal((prev) =>
-        prev.open ? { ...prev, error: "삭제 사유를 입력하세요." } : prev,
+        prev.open ? { ...prev, error: "삭제 사유를 입력하세요." } : prev
       );
       return;
     }
@@ -933,13 +858,13 @@ export default function AdminPolicyView() {
               </div>
               <div className="row">
                 <div className="k">파일</div>
-                <div className="v">
-                  {renderAttachmentSummary(right)}
-                </div>
+                <div className="v">{renderAttachmentSummary(right)}</div>
               </div>
               <div className="row">
                 <div className="k">업데이트</div>
-                <div className="v">{new Date(right.updatedAt).toLocaleString()}</div>
+                <div className="v">
+                  {new Date(right.updatedAt).toLocaleString()}
+                </div>
               </div>
 
               {right.status === "PENDING_REVIEWER" ? (
@@ -980,12 +905,13 @@ export default function AdminPolicyView() {
           <section className="cb-policy-card">
             <div className="cb-policy-card-title">빠른 안내</div>
             <div className="cb-policy-empty">
-              우측 상단에서 탭으로 <b>초안/전처리/검토/히스토리</b>를 전환할 수 있습니다.
+              우측 상단에서 탭으로 <b>초안/전처리/검토/히스토리</b>를 전환할 수
+              있습니다.
               {right.status === "PENDING_REVIEWER" ? (
                 <>
                   <br />
-                  현재는 <b>검토 대기</b> 상태이므로 <b>검토</b> 탭에서 “검토안(읽기 전용)”을
-                  확인하세요.
+                  현재는 <b>검토 대기</b> 상태이므로 <b>검토</b> 탭에서
+                  “검토안(읽기 전용)”을 확인하세요.
                 </>
               ) : null}
             </div>
@@ -996,7 +922,11 @@ export default function AdminPolicyView() {
 
     if (rightTab === "DRAFT") {
       if (right.status !== "DRAFT") {
-        return <div className="cb-policy-empty">초안(DRAFT)에서만 편집이 가능합니다.</div>;
+        return (
+          <div className="cb-policy-empty">
+            초안(DRAFT)에서만 편집이 가능합니다.
+          </div>
+        );
       }
 
       return (
@@ -1006,7 +936,11 @@ export default function AdminPolicyView() {
           <div className="cb-policy-form">
             <div className="field">
               <div className="label">document_id</div>
-              <input className="cb-policy-input" value={draftForm.documentId} disabled />
+              <input
+                className="cb-policy-input"
+                value={draftForm.documentId}
+                disabled
+              />
             </div>
 
             <div className="field">
@@ -1014,7 +948,9 @@ export default function AdminPolicyView() {
               <input
                 className="cb-policy-input"
                 value={draftForm.title}
-                onChange={(e) => setDraftForm((s) => ({ ...s, title: e.target.value }))}
+                onChange={(e) =>
+                  setDraftForm((s) => ({ ...s, title: e.target.value }))
+                }
                 placeholder="문서 제목"
               />
             </div>
@@ -1024,7 +960,9 @@ export default function AdminPolicyView() {
               <input
                 className="cb-policy-input"
                 value={draftForm.version}
-                onChange={(e) => setDraftForm((s) => ({ ...s, version: e.target.value }))}
+                onChange={(e) =>
+                  setDraftForm((s) => ({ ...s, version: e.target.value }))
+                }
                 placeholder="숫자"
                 inputMode="numeric"
               />
@@ -1043,18 +981,28 @@ export default function AdminPolicyView() {
               <textarea
                 className="cb-policy-textarea"
                 value={draftForm.changeSummary}
-                onChange={(e) => setDraftForm((s) => ({ ...s, changeSummary: e.target.value }))}
+                onChange={(e) =>
+                  setDraftForm((s) => ({ ...s, changeSummary: e.target.value }))
+                }
                 placeholder="변경 요약(필수)"
                 rows={4}
               />
             </div>
 
             <div className="cb-policy-form-actions">
-              <button type="button" className="cb-admin-primary-btn" onClick={onSaveDraft}>
+              <button
+                type="button"
+                className="cb-admin-primary-btn"
+                onClick={onSaveDraft}
+              >
                 저장
               </button>
 
-              <button type="button" className="cb-admin-ghost-btn" onClick={onPickFile}>
+              <button
+                type="button"
+                className="cb-admin-ghost-btn"
+                onClick={onPickFile}
+              >
                 파일 업로드/교체
               </button>
             </div>
@@ -1073,11 +1021,15 @@ export default function AdminPolicyView() {
               <div className="k">상태</div>
               <div className="v">
                 <span
-                  className={cx("cb-policy-pre-badge", `is-${right.preprocessStatus.toLowerCase()}`)}
+                  className={cx(
+                    "cb-policy-pre-badge",
+                    `is-${right.preprocessStatus.toLowerCase()}`
+                  )}
                 >
                   {right.preprocessStatus}
                 </span>
-                {right.preprocessStatus === "FAILED" && right.preprocessError ? (
+                {right.preprocessStatus === "FAILED" &&
+                right.preprocessError ? (
                   <span className="err"> {right.preprocessError}</span>
                 ) : null}
               </div>
@@ -1092,27 +1044,34 @@ export default function AdminPolicyView() {
                     {right.preprocessPreview.chars.toLocaleString()} chars
                   </div>
                 </div>
-                <pre className="cb-policy-excerpt">{right.preprocessPreview.excerpt}</pre>
+                <pre className="cb-policy-excerpt">
+                  {right.preprocessPreview.excerpt}
+                </pre>
               </>
             ) : (
               <div className="cb-policy-empty muted">
                 {right.preprocessStatus === "IDLE"
                   ? "파일 업로드 후 전처리를 실행하면 미리보기가 표시됩니다."
                   : right.preprocessStatus === "PROCESSING"
-                    ? "전처리 진행 중…"
-                    : right.preprocessStatus === "FAILED"
-                      ? "전처리에 실패했습니다. 재업로드 또는 재시도하세요."
-                      : "미리보기가 없습니다."}
+                  ? "전처리 진행 중…"
+                  : right.preprocessStatus === "FAILED"
+                  ? "전처리에 실패했습니다. 재업로드 또는 재시도하세요."
+                  : "미리보기가 없습니다."}
               </div>
             )}
 
-            {right.status === "DRAFT" && right.preprocessStatus === "FAILED" && (
-              <div className="cb-policy-pre-actions">
-                <button type="button" className="cb-admin-ghost-btn" onClick={onRetryPreprocess}>
-                  전처리 재시도
-                </button>
-              </div>
-            )}
+            {right.status === "DRAFT" &&
+              right.preprocessStatus === "FAILED" && (
+                <div className="cb-policy-pre-actions">
+                  <button
+                    type="button"
+                    className="cb-admin-ghost-btn"
+                    onClick={onRetryPreprocess}
+                  >
+                    전처리 재시도
+                  </button>
+                </div>
+              )}
           </div>
         </section>
       );
@@ -1161,24 +1120,27 @@ export default function AdminPolicyView() {
 
                 <div className="row">
                   <div className="k">파일</div>
-                  <div className="v">
-                    {renderAttachmentSummary(right)}
-                  </div>
+                  <div className="v">{renderAttachmentSummary(right)}</div>
                 </div>
 
                 <div className="row">
                   <div className="k">업데이트</div>
-                  <div className="v">{new Date(right.updatedAt).toLocaleString()}</div>
+                  <div className="v">
+                    {new Date(right.updatedAt).toLocaleString()}
+                  </div>
                 </div>
               </div>
 
               <div className="cb-policy-empty muted" style={{ marginTop: 8 }}>
-                검토 대기 중인 문서입니다. 이 화면에서는 편집할 수 없으며, 내용 확인만 가능합니다.
+                검토 대기 중인 문서입니다. 이 화면에서는 편집할 수 없으며, 내용
+                확인만 가능합니다.
               </div>
             </section>
 
             <section className="cb-policy-card">
-              <div className="cb-policy-card-title">검토안 내용 (전처리 미리보기)</div>
+              <div className="cb-policy-card-title">
+                검토안 내용 (전처리 미리보기)
+              </div>
 
               {right.preprocessStatus === "READY" && right.preprocessPreview ? (
                 <div className="cb-policy-preprocess">
@@ -1189,7 +1151,9 @@ export default function AdminPolicyView() {
                       {right.preprocessPreview.chars.toLocaleString()} chars
                     </div>
                   </div>
-                  <pre className="cb-policy-excerpt">{right.preprocessPreview.excerpt}</pre>
+                  <pre className="cb-policy-excerpt">
+                    {right.preprocessPreview.excerpt}
+                  </pre>
                 </div>
               ) : (
                 <div className="cb-policy-empty muted">
@@ -1205,7 +1169,9 @@ export default function AdminPolicyView() {
         return (
           <section className="cb-policy-card">
             <div className="cb-policy-card-title">1차 검토 / 검토요청</div>
-            <div className="cb-policy-empty">초안(DRAFT)에서만 검토 요청이 가능합니다.</div>
+            <div className="cb-policy-empty">
+              초안(DRAFT)에서만 검토 요청이 가능합니다.
+            </div>
           </section>
         );
       }
@@ -1220,10 +1186,15 @@ export default function AdminPolicyView() {
                 type="checkbox"
                 checked={reviewCheck.checkedBasics}
                 onChange={(e) =>
-                  setReviewCheck((s) => ({ ...s, checkedBasics: e.target.checked }))
+                  setReviewCheck((s) => ({
+                    ...s,
+                    checkedBasics: e.target.checked,
+                  }))
                 }
               />
-              <span>필수 입력(document_id/title/version/change_summary/파일) 확인</span>
+              <span>
+                필수 입력(document_id/title/version/change_summary/파일) 확인
+              </span>
             </label>
 
             <label className="cb-policy-check">
@@ -1231,7 +1202,10 @@ export default function AdminPolicyView() {
                 type="checkbox"
                 checked={reviewCheck.checkedPreview}
                 onChange={(e) =>
-                  setReviewCheck((s) => ({ ...s, checkedPreview: e.target.checked }))
+                  setReviewCheck((s) => ({
+                    ...s,
+                    checkedPreview: e.target.checked,
+                  }))
                 }
                 disabled={right.preprocessStatus !== "READY"}
               />
@@ -1244,13 +1218,19 @@ export default function AdminPolicyView() {
                 className="cb-admin-primary-btn"
                 onClick={onSubmitReview}
                 disabled={!canSubmitReview}
-                title={!canSubmitReview ? "체크/전처리 조건을 만족해야 합니다." : "검토 요청"}
+                title={
+                  !canSubmitReview
+                    ? "체크/전처리 조건을 만족해야 합니다."
+                    : "검토 요청"
+                }
               >
                 검토요청
               </button>
 
               {right.preprocessStatus !== "READY" && (
-                <div className="cb-policy-hint">전처리 미리보기가 READY여야 합니다.</div>
+                <div className="cb-policy-hint">
+                  전처리 미리보기가 READY여야 합니다.
+                </div>
               )}
             </div>
           </div>
@@ -1275,7 +1255,9 @@ export default function AdminPolicyView() {
                   <div className="a">{a.action}</div>
                   <div className="m">
                     <span className="actor">{a.actor}</span>
-                    {a.message ? <span className="msg">{a.message}</span> : null}
+                    {a.message ? (
+                      <span className="msg">{a.message}</span>
+                    ) : null}
                   </div>
                 </div>
               ))}
@@ -1289,7 +1271,10 @@ export default function AdminPolicyView() {
     <div className="cb-policy-root">
       {toast.open && (
         <div
-          className={cx("cb-reviewer-toast", `cb-reviewer-toast--${toast.tone}`)}
+          className={cx(
+            "cb-reviewer-toast",
+            `cb-reviewer-toast--${toast.tone}`
+          )}
           role="status"
           aria-live="polite"
         >
@@ -1303,7 +1288,11 @@ export default function AdminPolicyView() {
             <div className="cb-policy-left-title">사규/정책 문서</div>
 
             <div className="cb-policy-left-actions">
-              <button type="button" className="cb-admin-ghost-btn" onClick={onCreateDraft}>
+              <button
+                type="button"
+                className="cb-admin-ghost-btn"
+                onClick={onCreateDraft}
+              >
                 새 사규 업로드
               </button>
             </div>
@@ -1392,7 +1381,9 @@ export default function AdminPolicyView() {
 
           <div className="cb-policy-group-list">
             {filteredGroups.length === 0 ? (
-              <div className="cb-policy-empty">조건에 해당하는 문서가 없습니다.</div>
+              <div className="cb-policy-empty">
+                조건에 해당하는 문서가 없습니다.
+              </div>
             ) : (
               filteredGroups.map((g) => {
                 const active = g.active;
@@ -1400,9 +1391,16 @@ export default function AdminPolicyView() {
                 const pending = g.pending;
 
                 const representative =
-                  draft ?? pending ?? active ?? g.rejected ?? g.archived?.[0] ?? g.deleted;
+                  draft ??
+                  pending ??
+                  active ??
+                  g.rejected ??
+                  g.archived?.[0] ??
+                  g.deleted;
 
-                const isSelected = Boolean(right && right.documentId === g.documentId);
+                const isSelected = Boolean(
+                  right && right.documentId === g.documentId
+                );
 
                 const actionBtn = getGroupActionButtonState(g);
                 const metaChips = buildGroupMetaChips(g);
@@ -1412,7 +1410,10 @@ export default function AdminPolicyView() {
                     key={g.documentId}
                     role="button"
                     tabIndex={0}
-                    className={cx("cb-policy-group", isSelected && "is-selected")}
+                    className={cx(
+                      "cb-policy-group",
+                      isSelected && "is-selected"
+                    )}
                     onClick={() => onClickGroup(g)}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" || e.key === " ") {
@@ -1422,10 +1423,14 @@ export default function AdminPolicyView() {
                     }}
                   >
                     <div className="cb-policy-group-top">
-                      <div className="cb-policy-group-docid">{g.documentId}</div>
+                      <div className="cb-policy-group-docid">
+                        {g.documentId}
+                      </div>
 
                       <div className="cb-policy-group-top-right">
-                        {representative ? <StatusPill status={representative.status} /> : null}
+                        {representative ? (
+                          <StatusPill status={representative.status} />
+                        ) : null}
 
                         {actionBtn.show ? (
                           <button
@@ -1449,7 +1454,10 @@ export default function AdminPolicyView() {
 
                     <div className="cb-policy-group-meta">
                       {metaChips.map((c) => (
-                        <span key={c.key} className={cx("cb-policy-meta-chip", c.className)}>
+                        <span
+                          key={c.key}
+                          className={cx("cb-policy-meta-chip", c.className)}
+                        >
                           {c.label}
                         </span>
                       ))}
@@ -1467,7 +1475,8 @@ export default function AdminPolicyView() {
               <div>
                 <div className="title">사규/정책을 선택하세요</div>
                 <div className="desc">
-                  좌측 목록에서 문서를 선택하면 상세/업로드/검토요청을 진행할 수 있습니다.
+                  좌측 목록에서 문서를 선택하면 상세/업로드/검토요청을 진행할 수
+                  있습니다.
                 </div>
               </div>
             </div>
@@ -1485,7 +1494,9 @@ export default function AdminPolicyView() {
                   <div className="cb-policy-right-head-badges">
                     <StatusPill status={right.status} />
                     {right.status === "ACTIVE" ? (
-                      <span className="cb-reviewer-pill cb-reviewer-pill--neutral">현재 적용중</span>
+                      <span className="cb-reviewer-pill cb-reviewer-pill--neutral">
+                        현재 적용중
+                      </span>
                     ) : null}
                   </div>
 
@@ -1517,23 +1528,36 @@ export default function AdminPolicyView() {
                     >
                       {sortedVersionsInGroup.map((v) => (
                         <option key={v.id} value={v.id}>
-                          {`v${v.version} · ${v.status} · ${new Date(v.updatedAt).toLocaleDateString()}`}
+                          {`v${v.version} · ${v.status} · ${new Date(
+                            v.updatedAt
+                          ).toLocaleDateString()}`}
                         </option>
                       ))}
                     </select>
                   </div>
 
-                  <div className="cb-policy-tabs" role="tablist" aria-label="Policy detail tabs">
+                  <div
+                    className="cb-policy-tabs"
+                    role="tablist"
+                    aria-label="Policy detail tabs"
+                  >
                     {tabItems.map((t) => (
                       <button
                         key={t.id}
                         type="button"
                         role="tab"
                         aria-selected={rightTab === t.id}
-                        className={cx("cb-policy-tab", rightTab === t.id && "is-active")}
+                        className={cx(
+                          "cb-policy-tab",
+                          rightTab === t.id && "is-active"
+                        )}
                         onClick={() => setRightTab(t.id)}
                         disabled={Boolean(t.disabled)}
-                        title={t.disabled ? "초안(DRAFT)에서만 사용 가능합니다." : t.label}
+                        title={
+                          t.disabled
+                            ? "초안(DRAFT)에서만 사용 가능합니다."
+                            : t.label
+                        }
                       >
                         {t.label}
                       </button>
@@ -1564,74 +1588,22 @@ export default function AdminPolicyView() {
             setJumpToPreprocessOnClose(false);
           }
         }}
-        onAddFiles={async (fs): Promise<AddFilesOutcome[]> => {
-          if (!selected || selected.status !== "DRAFT") return [];
+        onAddFiles={(fs) => {
+          if (!selected || selected.status !== "DRAFT") return;
+          try {
+            attachFilesToDraft(selected.id, fs, actor);
+            runPreprocess(selected.id, actor);
 
-          const existedNames = new Set(
-            (policyFiles ?? []).map((f) => f.name.trim().toLowerCase())
-          );
+            setJumpToPreprocessOnClose(true);
 
-          const outcomes: AddFilesOutcome[] = [];
-          let okCount = 0;
-
-          for (const file of fs) {
-            const key = makeFileKey(file.name, file.size);
-            const lower = file.name.trim().toLowerCase();
-
-            // (1) 같은 모달 세션/현재 draft 기준 즉시 중복 차단(불필요한 presign/업로드 방지)
-            if (existedNames.has(lower)) {
-              outcomes.push({
-                key,
-                ok: false,
-                errorMessage: "동일한 파일이 이미 등록되어 있습니다.",
-              });
-              continue;
-            }
-
-            try {
-              // (2) presign 발급(토큰 포함) → S3 direct PUT(무토큰) → 실패 시 proxy PUT(토큰 포함)
-              await uploadDocFileWithPresign(file);
-
-              // (3) 스토어 메타 반영(모달이 files 갱신을 감지해 spinner→check 전환)
-              attachFilesToDraft(selected.id, [file], actor);
-              existedNames.add(lower);
-
-              okCount += 1;
-              outcomes.push({ key, ok: true });
-            } catch (e) {
-              outcomes.push({
-                key,
-                ok: false,
-                errorMessage: mapUploadErrorMessage(e),
-              });
-            }
-          }
-
-          const failCount = outcomes.length - okCount;
-
-          // preprocess는 “성공 1개라도” 있었을 때만 1회 실행
-          if (okCount > 0) {
-            try {
-              runPreprocess(selected.id, actor);
-              setJumpToPreprocessOnClose(true);
-            } catch (e) {
-              const t = mapPolicyError(e);
-              showToast(t.tone, t.message);
-            }
-          }
-
-          if (okCount > 0 && failCount === 0) {
             showToast(
               "neutral",
-              "파일 업로드 완료 · 전처리를 시작했습니다. (닫으면 전처리 탭으로 이동)",
+              "파일 업로드 완료 · 전처리를 시작했습니다. (닫으면 전처리 탭으로 이동)"
             );
-          } else if (okCount > 0 && failCount > 0) {
-            showToast("warn", `${okCount}개 업로드 성공 · ${failCount}개 실패`);
-          } else {
-            showToast("danger", "업로드에 실패했습니다. 잠시 후 재시도하세요.");
+          } catch (e) {
+            const t = mapPolicyError(e);
+            showToast(t.tone, t.message);
           }
-
-          return outcomes;
         }}
         onRemoveFile={(id) => {
           if (!selected || selected.status !== "DRAFT") return;
@@ -1660,10 +1632,14 @@ export default function AdminPolicyView() {
             if (e.target === e.currentTarget) closeDeleteModal();
           }}
         >
-          <div className="cb-reviewer-modal" onMouseDown={(e) => e.stopPropagation()}>
+          <div
+            className="cb-reviewer-modal"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
             <div className="cb-reviewer-modal-title">삭제 사유 입력</div>
             <div className="cb-reviewer-modal-desc">
-              삭제는 복구 정책에 따라 제한될 수 있습니다. 사유는 감사 로그에 남습니다. (필수)
+              삭제는 복구 정책에 따라 제한될 수 있습니다. 사유는 감사 로그에
+              남습니다. (필수)
             </div>
 
             <div style={{ marginTop: 10 }}>
@@ -1673,17 +1649,25 @@ export default function AdminPolicyView() {
                 value={deleteModal.reason}
                 onChange={(e) =>
                   setDeleteModal((prev) =>
-                    prev.open ? { ...prev, reason: e.target.value, error: undefined } : prev,
+                    prev.open
+                      ? { ...prev, reason: e.target.value, error: undefined }
+                      : prev
                   )
                 }
                 placeholder="삭제 사유를 입력하세요. (필수)"
               />
             </div>
 
-            {deleteModal.error && <div className="cb-reviewer-error">{deleteModal.error}</div>}
+            {deleteModal.error && (
+              <div className="cb-reviewer-error">{deleteModal.error}</div>
+            )}
 
             <div className="cb-reviewer-modal-actions">
-              <button type="button" className="cb-reviewer-ghost-btn" onClick={closeDeleteModal}>
+              <button
+                type="button"
+                className="cb-reviewer-ghost-btn"
+                onClick={closeDeleteModal}
+              >
                 취소
               </button>
               <button
