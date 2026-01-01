@@ -36,7 +36,15 @@ export default defineConfig({
        * - /api/chat/sessions...
        * - /chat/messages...
        * - /chat/sessions/.../feedback ...
+       * - /admin/dashboard/... (대시보드 API)
        */
+      // 대시보드 API: /api/chat/admin/* → /admin/*
+      "/api/chat/admin": {
+        target: "http://localhost:9005",
+        changeOrigin: true,
+        secure: false,
+        rewrite: (path) => path.replace(/^\/api\/chat\/admin/, "/admin"),
+      },
       "/api/chat": {
         target: "http://localhost:9005",
         changeOrigin: true,

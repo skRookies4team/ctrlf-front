@@ -1,17 +1,23 @@
-import React from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import AdminFilterBar from "../../AdminFilterBar";
 import type { CommonFilterState } from "../../adminFilterTypes";
 import KpiRow from "../KpiRow";
+import { DEPARTMENT_OPTIONS } from "../../adminDashboardMocks";
+import type {
+  PeriodFilter,
+  KpiCard,
+  ChatbotVolumePoint,
+  ChatbotDomainShare,
+  ChatbotRouteShare,
+  PopularKeyword,
+} from "../../adminDashboardTypes";
 import {
-  DEPARTMENT_OPTIONS,
-  CHATBOT_PRIMARY_KPIS_BY_PERIOD,
-  CHATBOT_SECONDARY_KPIS_BY_PERIOD,
-  CHATBOT_VOLUME_BY_PERIOD,
-  CHATBOT_DOMAIN_SHARE_BY_PERIOD,
-  CHATBOT_ROUTE_SHARE_BY_PERIOD,
-  POPULAR_KEYWORDS_BY_PERIOD,
-} from "../../adminDashboardMocks";
-import type { PeriodFilter } from "../../adminDashboardTypes";
+  getChatSummary,
+  getRouteRatio,
+  getTopKeywords,
+  getQuestionTrend,
+  getDomainRatio,
+} from "../../api/chatApi";
 
 interface AdminChatbotTabProps {
   period: PeriodFilter;
@@ -24,6 +30,28 @@ const AdminChatbotTab: React.FC<AdminChatbotTabProps> = ({
   selectedDept,
   onFilterChange,
 }) => {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [summary, setSummary] = useState<{
+    todayQuestionCount: number;
+    averageResponseTime: number;
+    piiDetectionRate: number;
+    errorRate: number;
+    last7DaysQuestionCount: number;
+    activeUserCount: number;
+    satisfactionRate: number;
+    ragUsageRate: number;
+  } | null>(null);
+  const [volumeData, setVolumeData] = useState<ChatbotVolumePoint[]>([]);
+  const [domainData, setDomainData] = useState<ChatbotDomainShare[]>([]);
+  const [routeData, setRouteData] = useState<ChatbotRouteShare[]>([]);
+  const [keywordData, setKeywordData] = useState<PopularKeyword[]>([]);
+  const [trendSummary, setTrendSummary] = useState<{
+    totalQuestionCount: number;
+    averageQuestionCountPerPeriod: number;
+    averageErrorRate: number;
+  } | null>(null);
+
   const filterValue: CommonFilterState = {
     period,
     departmentId: selectedDept,
@@ -33,29 +61,153 @@ const AdminChatbotTab: React.FC<AdminChatbotTabProps> = ({
     onFilterChange(next);
   };
 
-  // Type assertion to ensure period is a valid key for Record access
-  const periodKey = period as keyof typeof CHATBOT_PRIMARY_KPIS_BY_PERIOD;
-  const primaryKpis = CHATBOT_PRIMARY_KPIS_BY_PERIOD[periodKey];
-  const secondaryKpis = CHATBOT_SECONDARY_KPIS_BY_PERIOD[periodKey];
-  const volumeData = CHATBOT_VOLUME_BY_PERIOD[periodKey];
-  const domainData = CHATBOT_DOMAIN_SHARE_BY_PERIOD[periodKey];
-  const routeData = CHATBOT_ROUTE_SHARE_BY_PERIOD[periodKey];
-  const keywordData = POPULAR_KEYWORDS_BY_PERIOD[periodKey];
+  // API 호출 함수
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const department = selectedDept === "ALL" ? undefined : selectedDept;
+
+      // 병렬로 모든 API 호출
+      const [summaryRes, routeRes, keywordRes, trendRes, domainRes] =
+        await Promise.all([
+          getChatSummary(period, department),
+          getRouteRatio(period, department),
+          getTopKeywords(period, department),
+          getQuestionTrend(period, department),
+          getDomainRatio(period, department),
+        ]);
+
+      setSummary(summaryRes);
+
+      // 질문 수 · 에러율 추이 요약 정보 저장
+      setTrendSummary({
+        totalQuestionCount: trendRes.totalQuestionCount,
+        averageQuestionCountPerPeriod: trendRes.averageQuestionCountPerPeriod,
+        averageErrorRate: trendRes.averageErrorRate,
+      });
+
+      // 질문 수 · 에러율 추이 데이터 변환
+      setVolumeData(
+        trendRes.items.map((item) => ({
+          label: item.periodLabel,
+          count: item.questionCount,
+          errorRatio: item.errorRate / 100, // 백분율을 소수로 변환
+        }))
+      );
+
+      // 도메인별 질문 비율 데이터 변환
+      setDomainData(
+        domainRes.items.map((item) => ({
+          id: item.domain.toLowerCase(),
+          domainLabel: item.domainName,
+          ratio: item.ratio,
+        }))
+      );
+
+      // 라우트별 질문 비율 데이터 변환
+      setRouteData(
+        routeRes.items.map((item) => ({
+          id: `route_${item.routeType.toLowerCase()}`,
+          routeLabel: item.routeName,
+          ratio: item.ratio,
+        }))
+      );
+
+      // 키워드 Top 5 데이터 변환
+      setKeywordData(
+        keywordRes.items.map((item) => ({
+          keyword: item.keyword,
+          count: item.questionCount,
+        }))
+      );
+    } catch (err) {
+      console.error("[AdminChatbotTab] API 호출 실패:", err);
+      setError(
+        err instanceof Error ? err.message : "데이터를 불러오는데 실패했습니다."
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, [period, selectedDept]);
+
+  // 필터 변경 시 데이터 재조회
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  // KPI 데이터 생성
+  const primaryKpis: KpiCard[] = summary
+    ? [
+        {
+          id: "todayQuestions",
+          label: "오늘 질문 수",
+          value: `${summary.todayQuestionCount.toLocaleString()}건`,
+        },
+        {
+          id: "avgLatency",
+          label: "평균 응답 시간",
+          value: `${summary.averageResponseTime}ms`,
+        },
+        {
+          id: "piiRatio",
+          label: "PII 감지 비율",
+          value: `${summary.piiDetectionRate.toFixed(1)}%`,
+        },
+        {
+          id: "errorRatio",
+          label: "에러율",
+          value: `${summary.errorRate.toFixed(1)}%`,
+        },
+      ]
+    : [];
+
+  const secondaryKpis: KpiCard[] = summary
+    ? [
+        {
+          id: "weekQuestions",
+          label: "최근 7일 질문 수",
+          value: `${summary.last7DaysQuestionCount.toLocaleString()}건`,
+          caption: `일평균 약 ${Math.round(
+            summary.last7DaysQuestionCount / 7
+          )}건`,
+        },
+        {
+          id: "activeUsers",
+          label: "활성 사용자 수",
+          value: `${summary.activeUserCount}명`,
+          caption: `최근 ${
+            period === "7d" ? "7일" : period === "30d" ? "30일" : "90일"
+          } 기준`,
+        },
+        {
+          id: "satisfaction",
+          label: "응답 만족도",
+          value: `${summary.satisfactionRate.toFixed(1)}%`,
+          caption: "피드백 기준",
+        },
+        {
+          id: "ragUsage",
+          label: "RAG 사용 비율",
+          value: `${summary.ragUsageRate.toFixed(1)}%`,
+          caption: "전체 질문 대비",
+        },
+      ]
+    : [];
 
   const max = Math.max(...volumeData.map((p) => p.count), 1);
-  const total = volumeData.reduce((sum, p) => sum + p.count, 0);
-  const avg = Math.round(total / volumeData.length);
-
-  const hasErrorRatio = volumeData.some(
-    (p) => typeof p.errorRatio === "number"
-  );
-  const avgErrorRatio =
-    hasErrorRatio && volumeData.length > 0
-      ? volumeData.reduce((sum, p) => sum + (p.errorRatio ?? 0), 0) /
-        volumeData.length
-      : null;
-
-  const onRefresh = () => {};
+  const total = trendSummary
+    ? trendSummary.totalQuestionCount
+    : volumeData.reduce((sum, p) => sum + p.count, 0);
+  const avg = trendSummary
+    ? trendSummary.averageQuestionCountPerPeriod
+    : Math.round(total / volumeData.length);
+  const avgErrorRatio = trendSummary
+    ? trendSummary.averageErrorRate / 100
+    : volumeData.length > 0
+    ? volumeData.reduce((sum, p) => sum + (p.errorRatio ?? 0), 0) /
+      volumeData.length
+    : null;
 
   return (
     <div className="cb-admin-tab-panel">
@@ -64,8 +216,27 @@ const AdminChatbotTab: React.FC<AdminChatbotTabProps> = ({
         value={filterValue}
         onChange={handleFilterChange}
         departments={DEPARTMENT_OPTIONS}
-        onRefresh={onRefresh}
+        onRefresh={fetchData}
       />
+      {loading && (
+        <div style={{ padding: "20px", textAlign: "center" }}>
+          데이터를 불러오는 중...
+        </div>
+      )}
+      {error && (
+        <div
+          style={{
+            padding: "20px",
+            textAlign: "center",
+            color: "#d32f2f",
+            backgroundColor: "#ffebee",
+            borderRadius: "4px",
+            marginBottom: "16px",
+          }}
+        >
+          {error}
+        </div>
+      )}
 
       <KpiRow items={primaryKpis} />
       <KpiRow items={secondaryKpis} />

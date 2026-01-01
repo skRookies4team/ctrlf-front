@@ -12,6 +12,7 @@ import type {
   DeptEducationRow,
   DeptQuizScoreRow,
   QuizSummaryRow,
+  DifficultQuestion,
   MetricItem,
   PiiTrendPoint,
   LatencyBucket,
@@ -959,6 +960,72 @@ export const deptQuizRowsMock: DeptQuizScoreRow[] = [
   { id: "dq-dev", deptName: "개발팀", avgScore: 85, participantCount: 28 },
   { id: "dq-sales", deptName: "영업팀", avgScore: 79, participantCount: 23 },
   { id: "dq-legal", deptName: "법무팀", avgScore: 88, participantCount: 10 },
+];
+
+export const quizSummaryRowsMock: QuizSummaryRow[] = [
+  {
+    id: "qs1",
+    quizTitle: "개인정보보호 퀴즈",
+    avgScore: 86,
+    participantCount: 57,
+    passRate: 81,
+  },
+  {
+    id: "qs2",
+    quizTitle: "직장 내 괴롭힘 예방 퀴즈",
+    avgScore: 83,
+    participantCount: 49,
+    passRate: 75,
+  },
+  {
+    id: "qs3",
+    quizTitle: "성희롱 예방교육 퀴즈",
+    avgScore: 88,
+    participantCount: 26,
+    passRate: 85,
+  },
+  {
+    id: "qs4",
+    quizTitle: "정보보안 기본 수칙 퀴즈",
+    avgScore: 82,
+    participantCount: 31,
+    passRate: 73,
+  },
+  {
+    id: "qs5",
+    quizTitle: "내부 통제 및 컴플라이언스 퀴즈",
+    avgScore: 84,
+    participantCount: 13,
+    passRate: 77,
+  },
+];
+
+export const difficultQuestionsMock: DifficultQuestion[] = [
+  {
+    id: "dq1",
+    title: "[개인정보] 민감정보에 해당하는 항목은?",
+    wrongRate: 42,
+  },
+  {
+    id: "dq2",
+    title: "[보안 사고] 내부 신고 채널이 아닌 것은?",
+    wrongRate: 38,
+  },
+  {
+    id: "dq3",
+    title: "[괴롭힘 예방] 직장 내 괴롭힘에 해당하지 않는 사례는?",
+    wrongRate: 31,
+  },
+  {
+    id: "dq4",
+    title: "[컴플라이언스] 내부정보 이용 금지 위반에 해당하는 행위는?",
+    wrongRate: 36,
+  },
+  {
+    id: "dq5",
+    title: "[정보보안] 패스워드 관리 시 금지해야 하는 행동은?",
+    wrongRate: 29,
+  },
 ];
 
 // 지표 탭 – 그래프용 Mock 데이터

@@ -1,16 +1,15 @@
-import React from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import AdminFilterBar from "../../AdminFilterBar";
 import type { CommonFilterState } from "../../adminFilterTypes";
-import {
-  PERIOD_OPTIONS,
-  DEPARTMENT_OPTIONS,
-  PII_TREND_BY_PERIOD,
-  LATENCY_BUCKET_BY_PERIOD,
-  MODEL_LATENCY_BY_PERIOD,
-  securityMetricsMock,
-  qualityMetricsMock,
-} from "../../adminDashboardMocks";
-import type { PeriodFilter } from "../../adminDashboardTypes";
+import { PERIOD_OPTIONS, DEPARTMENT_OPTIONS } from "../../adminDashboardMocks";
+import type {
+  PeriodFilter,
+  MetricItem,
+  PiiTrendPoint,
+  LatencyBucket,
+  ModelLatency,
+} from "../../adminDashboardTypes";
+import { getSecurityMetrics, getPerformanceMetrics } from "../../api/metricApi";
 
 interface AdminMetricsTabProps {
   period: PeriodFilter;
@@ -23,6 +22,14 @@ const AdminMetricsTab: React.FC<AdminMetricsTabProps> = ({
   selectedDept,
   onFilterChange,
 }) => {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [securityMetrics, setSecurityMetrics] = useState<MetricItem[]>([]);
+  const [qualityMetrics, setQualityMetrics] = useState<MetricItem[]>([]);
+  const [piiTrend, setPiiTrend] = useState<PiiTrendPoint[]>([]);
+  const [latencyBuckets, setLatencyBuckets] = useState<LatencyBucket[]>([]);
+  const [modelLatency, setModelLatency] = useState<ModelLatency[]>([]);
+
   const filterValue: CommonFilterState = {
     period,
     departmentId: selectedDept,
@@ -32,10 +39,97 @@ const AdminMetricsTab: React.FC<AdminMetricsTabProps> = ({
     onFilterChange(next);
   };
 
-  const periodKeyForMetrics = period as keyof typeof PII_TREND_BY_PERIOD;
-  const piiTrend = PII_TREND_BY_PERIOD[periodKeyForMetrics];
-  const latencyBuckets = LATENCY_BUCKET_BY_PERIOD[periodKeyForMetrics];
-  const modelLatency = MODEL_LATENCY_BY_PERIOD[periodKeyForMetrics];
+  // API 호출 함수
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const department = selectedDept === "ALL" ? undefined : selectedDept;
+
+      // 병렬로 모든 API 호출
+      const [securityRes, performanceRes] = await Promise.all([
+        getSecurityMetrics(period, department),
+        getPerformanceMetrics(period, department),
+      ]);
+
+      // 보안 지표 변환
+      setSecurityMetrics([
+        {
+          id: "pii-block",
+          label: "PII 차단 횟수",
+          value: `${securityRes.piiBlockCount}건`,
+          description: "주민등록번호 / 계좌번호 / 카드번호 등 자동 차단",
+        },
+        {
+          id: "external-domain-block",
+          label: "외부 도메인 차단",
+          value: `${securityRes.externalDomainBlockCount}건`,
+          description: "허용되지 않은 외부 링크 공유 시도",
+        },
+      ]);
+
+      // PII 추이 데이터 변환
+      setPiiTrend(
+        securityRes.piiTrend.map((item) => ({
+          label: item.bucketStart,
+          inputRatio: item.inputDetectRate,
+          outputRatio: item.outputDetectRate,
+        }))
+      );
+
+      // 성능 지표 변환
+      setQualityMetrics([
+        {
+          id: "dislike-rate",
+          label: "답변 불만족 비율",
+          value: `${(performanceRes.dislikeRate * 100).toFixed(1)}%`,
+          description: "사용자가 '별로예요'를 선택한 비율",
+        },
+        {
+          id: "repeat-rate",
+          label: "재질문 비율",
+          value: `${(performanceRes.repeatRate * 100).toFixed(1)}%`,
+          description: performanceRes.repeatDefinition,
+        },
+        {
+          id: "oos-count",
+          label: "Out-of-scope 응답 수",
+          value: `${performanceRes.oosCount}건`,
+          description: "챗봇이 답변 불가로 응답한 횟수",
+        },
+      ]);
+
+      // 응답 시간 분포 데이터 변환
+      setLatencyBuckets(
+        performanceRes.latencyHistogram.map((item) => ({
+          label: item.range,
+          count: item.count,
+        }))
+      );
+
+      // 모델별 평균 지연시간 데이터 변환
+      setModelLatency(
+        performanceRes.modelLatency.map((item, index) => ({
+          id: `model-${index}`,
+          modelLabel: item.model,
+          avgMs: Math.round(item.avgLatencyMs),
+        }))
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "데이터를 불러오는 중 오류가 발생했습니다."
+      );
+      console.error("Failed to fetch metrics data:", err);
+    } finally {
+      setLoading(false);
+    }
+  }, [period, selectedDept]);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
 
   const maxPiiRatio = Math.max(
     ...piiTrend.map((row) => Math.max(row.inputRatio, row.outputRatio)),
@@ -45,7 +139,29 @@ const AdminMetricsTab: React.FC<AdminMetricsTabProps> = ({
   const maxLatencyCount = Math.max(...latencyBuckets.map((b) => b.count), 1);
 
   const periodLabel = PERIOD_OPTIONS.find((p) => p.id === period)?.label ?? "";
-  const onRefresh = () => {};
+  const onRefresh = () => {
+    fetchData();
+  };
+
+  if (loading) {
+    return (
+      <div className="cb-admin-tab-panel">
+        <div style={{ padding: "2rem", textAlign: "center" }}>
+          데이터를 불러오는 중...
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="cb-admin-tab-panel">
+        <div style={{ padding: "2rem", textAlign: "center", color: "red" }}>
+          오류: {error}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="cb-admin-tab-panel">
@@ -67,7 +183,7 @@ const AdminMetricsTab: React.FC<AdminMetricsTabProps> = ({
           </div>
 
           <ul className="cb-admin-metric-list">
-            {securityMetricsMock.map((m) => (
+            {securityMetrics.map((m) => (
               <li key={m.id} className="cb-admin-metric-item">
                 <div className="cb-admin-metric-main">
                   <span className="cb-admin-metric-label">{m.label}</span>
@@ -146,7 +262,7 @@ const AdminMetricsTab: React.FC<AdminMetricsTabProps> = ({
           </div>
 
           <ul className="cb-admin-metric-list">
-            {qualityMetricsMock.map((m) => (
+            {qualityMetrics.map((m) => (
               <li key={m.id} className="cb-admin-metric-item">
                 <div className="cb-admin-metric-main">
                   <span className="cb-admin-metric-label">{m.label}</span>

@@ -192,7 +192,6 @@ export type RoleKey =
   | "EMPLOYEE"
   | "VIDEO_CREATOR"
   | "CONTENTS_REVIEWER"
-  | "COMPLAINT_MANAGER"
   | "SYSTEM_ADMIN";
 
 export type CreatorType = "DEPT_CREATOR" | "GLOBAL_CREATOR" | null;
