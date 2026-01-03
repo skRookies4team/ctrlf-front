@@ -165,8 +165,7 @@ async function directFetchJson<T>(
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(
-      `[EDU_API] ${context}: fallback fetch HTTP ${res.status} ${
-        res.statusText
+      `[EDU_API] ${context}: fallback fetch HTTP ${res.status} ${res.statusText
       }${text ? ` - ${text.slice(0, 300)}` : ""}`
     );
   }
@@ -185,8 +184,7 @@ async function directFetchJson<T>(
     return JSON.parse(text) as T;
   } catch {
     throw new Error(
-      `[EDU_API] ${context}: fallback fetch 응답이 JSON이 아닙니다. content-type=${
-        ct || "unknown"
+      `[EDU_API] ${context}: fallback fetch 응답이 JSON이 아닙니다. content-type=${ct || "unknown"
       } body=${text.slice(0, 200)}`
     );
   }
@@ -594,8 +592,8 @@ function normalizeVideoRecord(
     typeof it.watchStatus === "string"
       ? it.watchStatus
       : typeof it.status === "string"
-      ? it.status
-      : undefined;
+        ? it.status
+        : undefined;
 
   return {
     id,
@@ -642,11 +640,11 @@ export async function getMyEducations(
   const list = Array.isArray(u)
     ? u
     : extractArrayOrThrow<Record<string, unknown>>(
-        u,
-        ["edus", "eduList", "educations", "items", "list", "data", "result"],
-        (x): x is Record<string, unknown> => isRecord(x),
-        "GET /edus/me"
-      );
+      u,
+      ["edus", "eduList", "educations", "items", "list", "data", "result"],
+      (x): x is Record<string, unknown> => isRecord(x),
+      "GET /edus/me"
+    );
 
   return list
     .map((it): EducationItem | null => {
@@ -854,10 +852,10 @@ export type QuizStartResponse = {
 };
 
 export type QuizTimerResponse = {
-  timeLimit: number;
+  timeLimit: number; // 문서상 null 가능하지만, 기존 UI 호환 위해 0으로 정규화
   startedAt: string;
-  expiresAt: string;
-  remainingSeconds: number;
+  expiresAt: string; // 문서상 null 가능하지만, 기존 UI 호환 위해 ""로 정규화
+  remainingSeconds: number; // 문서상 null 가능하지만, 기존 UI 호환 위해 0으로 정규화
   isExpired: boolean;
 };
 
@@ -890,6 +888,16 @@ export type QuizSubmitResponse = {
   submittedAt?: string;
 };
 
+export type QuizResultResponse = {
+  score: number;
+  passed: boolean;
+  passScore: number | null;
+  correctCount: number;
+  wrongCount: number;
+  totalCount: number;
+  finishedAt?: string;
+};
+
 export type QuizWrongNoteItem = {
   question: string;
   userAnswerIndex: number;
@@ -908,7 +916,23 @@ export type QuizAttemptSummary = {
   submittedAt?: string;
 };
 
+export type QuizMyAttemptItem = {
+  attemptId: string;
+  educationId: string;
+  educationTitle: string;
+  score: number;
+  passed: boolean;
+  attemptNo: number;
+  submittedAt: string;
+  isBestScore: boolean;
+};
+
 export type QuizRetryInfo = {
+  // 문서 응답에 포함(옵션)되는 메타 필드도 확장 (기존 사용처 호환을 위해 optional)
+  educationId?: string;
+  educationTitle?: string;
+  lastAttemptAt?: string;
+
   canRetry: boolean;
   currentAttemptCount: number;
   maxAttempts: number | null;
@@ -931,7 +955,7 @@ export type QuizLeaveResponse = {
 
 function isDeptStatItem(x: unknown): x is Record<string, unknown> {
   if (!isRecord(x)) return false;
-  return typeof (x.departmentName ?? x.name) === "string";
+  return typeof (x.departmentName ?? x.name ?? x.department) === "string";
 }
 
 function isAvailEduItem(x: unknown): x is Record<string, unknown> {
@@ -955,10 +979,43 @@ function isWrongItem(x: unknown): x is Record<string, unknown> {
   return typeof x.question === "string";
 }
 
+function buildQuizQuery(params?: { educationId?: string | number }): string {
+  if (!params) return "";
+  const q = new URLSearchParams();
+  if (params.educationId !== undefined && params.educationId !== null) {
+    q.set("educationId", String(params.educationId));
+  }
+  const s = q.toString();
+  return s ? `?${s}` : "";
+}
+
+/**
+ * 문서 기준: GET /quiz/department-stats
+ * - educationId optional query 지원
+ * - 기존 호출(getQuizDepartmentStats({signal}))도 깨지지 않도록 오버로드/런타임 분기
+ */
 export async function getQuizDepartmentStats(
   init?: Pick<RequestInit, "signal">
+): Promise<QuizDepartmentStat[]>;
+export async function getQuizDepartmentStats(
+  params?: { educationId?: string },
+  init?: Pick<RequestInit, "signal">
+): Promise<QuizDepartmentStat[]>;
+export async function getQuizDepartmentStats(
+  a?: { educationId?: string } | Pick<RequestInit, "signal">,
+  b?: Pick<RequestInit, "signal">
 ): Promise<QuizDepartmentStat[]> {
-  const url = `${EDU_BASE}/quiz/department-stats`;
+  const params =
+    a && isRecord(a) && "educationId" in a ? (a as { educationId?: string }) : undefined;
+
+  const init =
+    a && isRecord(a) && "signal" in a && !("educationId" in a)
+      ? (a as Pick<RequestInit, "signal">)
+      : b;
+
+  const qs = buildQuizQuery(params);
+  const url = `${EDU_BASE}/quiz/department-stats${qs}`;
+
   const raw = await eduFetch<unknown>(
     url,
     { method: "GET", signal: init?.signal },
@@ -985,6 +1042,7 @@ export async function getQuizDepartmentStats(
       const departmentName =
         (typeof it.departmentName === "string" && it.departmentName) ||
         (typeof it.name === "string" && it.name) ||
+        (typeof it.department === "string" && it.department) ||
         "";
       if (!departmentName) return null;
 
@@ -1052,8 +1110,8 @@ export async function getQuizAvailableEducations(
         typeof it.category === "string"
           ? it.category
           : typeof it.eduCategory === "string"
-          ? it.eduCategory
-          : null;
+            ? it.eduCategory
+            : null;
 
       const eduType = typeof it.eduType === "string" ? it.eduType : null;
       const educationStatus =
@@ -1075,6 +1133,9 @@ export async function getQuizAvailableEducations(
     .filter((v): v is QuizAvailableEducation => v !== null);
 }
 
+/**
+ * 문서 기준: GET /quiz/{eduId}/start
+ */
 export async function startQuiz(
   educationId: string | number,
   init?: Pick<RequestInit, "signal">
@@ -1082,10 +1143,11 @@ export async function startQuiz(
   const url = `${EDU_BASE}/quiz/${encodeURIComponent(
     String(educationId)
   )}/start`;
+
   const raw = await eduFetch<unknown>(
     url,
     { method: "GET", signal: init?.signal },
-    "GET /quiz/:educationId/start"
+    "GET /quiz/:eduId/start"
   );
 
   const dto = unwrapRecord(raw);
@@ -1102,7 +1164,7 @@ export async function startQuiz(
     dto,
     ["questions", "items", "list", "data", "result"],
     (x): x is Record<string, unknown> => isRecord(x),
-    "GET /quiz/:educationId/start (questions)"
+    "GET /quiz/:eduId/start (questions)"
   );
 
   const questions: QuizQuestionItem[] = qList
@@ -1123,8 +1185,11 @@ export async function startQuiz(
         ? (choicesRaw.filter((x) => typeof x === "string") as string[])
         : [];
 
-      const userSelectedIndex = toNumOrNull(q.userSelectedIndex);
-      const answerIndex = toNumOrNull(q.answerIndex);
+      // 복원 시 userSelectedIndex가 question에 포함될 수 있음
+      const userSelectedIndex =
+        toNumOrNull(q.userSelectedIndex ?? q.user_selected_index) ?? null;
+
+      const answerIndex = toNumOrNull(q.answerIndex ?? q.answer_index);
       const correctOption = toNumOrNull(q.correctOption);
 
       return {
@@ -1139,6 +1204,7 @@ export async function startQuiz(
     })
     .filter((v): v is QuizQuestionItem => v !== null);
 
+  // 저장 답안이 별도 배열로 오는 케이스도 흡수
   const savedAnswersRaw = (() => {
     const u = unwrapAny(dto);
     if (!isRecord(u)) return [];
@@ -1152,7 +1218,7 @@ export async function startQuiz(
     .map((a): { questionId: string; userSelectedIndex: number } | null => {
       if (!isRecord(a)) return null;
       const questionId = toId(a.questionId ?? a.id);
-      const idx = toNumOrNull(a.userSelectedIndex);
+      const idx = toNumOrNull(a.userSelectedIndex ?? a.user_selected_index);
       if (!questionId || idx === null) return null;
       return { questionId, userSelectedIndex: idx };
     })
@@ -1170,43 +1236,41 @@ export async function startQuiz(
   return merged as unknown as QuizStartResponse;
 }
 
+/**
+ * 문서 기준: GET /quiz/attempt/{attemptId}/timer
+ */
 export async function getQuizTimer(
   attemptId: string | number,
   init?: Pick<RequestInit, "signal">
 ): Promise<QuizTimerResponse> {
-  const candidates = [
-    `${EDU_BASE}/quiz/attempt/${encodeURIComponent(String(attemptId))}/timer`,
-  ];
+  const url = `${EDU_BASE}/quiz/attempt/${encodeURIComponent(
+    String(attemptId)
+  )}/timer`;
 
-  let lastErr: unknown = null;
-  for (const url of candidates) {
-    try {
-      const raw = await eduFetch<unknown>(
-        url,
-        { method: "GET", signal: init?.signal },
-        "GET /quiz/attempt/:id/timer"
-      );
+  const raw = await eduFetch<unknown>(
+    url,
+    { method: "GET", signal: init?.signal },
+    "GET /quiz/attempt/:id/timer"
+  );
 
-      const dto = unwrapRecord(raw);
-      if (!dto)
-        throw new Error(
-          "[EDU_API] getQuizTimer: 응답 형식이 올바르지 않습니다."
-        );
+  const dto = unwrapRecord(raw);
+  if (!dto)
+    throw new Error("[EDU_API] getQuizTimer: 응답 형식이 올바르지 않습니다.");
 
-      const timeLimit = toNumOrNull(dto.timeLimit) ?? 0;
-      const startedAt = typeof dto.startedAt === "string" ? dto.startedAt : "";
-      const expiresAt = typeof dto.expiresAt === "string" ? dto.expiresAt : "";
-      const remainingSeconds = toNumOrNull(dto.remainingSeconds) ?? 0;
-      const isExpired = (toBoolOrNull(dto.isExpired) ?? false) as boolean;
+  // 문서상 null 가능 → 기존 UI 호환 위해 0/""로 정규화
+  const timeLimit = toNumOrNull(dto.timeLimit) ?? 0;
+  const startedAt = typeof dto.startedAt === "string" ? dto.startedAt : "";
+  const expiresAt = typeof dto.expiresAt === "string" ? dto.expiresAt : "";
+  const remainingSeconds = toNumOrNull(dto.remainingSeconds) ?? 0;
+  const isExpired = (toBoolOrNull(dto.isExpired) ?? false) as boolean;
 
-      return { timeLimit, startedAt, expiresAt, remainingSeconds, isExpired };
-    } catch (e) {
-      lastErr = e;
-    }
-  }
-  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+  return { timeLimit, startedAt, expiresAt, remainingSeconds, isExpired };
 }
 
+/**
+ * (문서에는 PUT이 없음) 기존 구현/호환 유지용
+ * - 서버가 지원하지 않으면 405/404가 날 수 있으니 실제 사용처가 없다면 호출하지 않는 것을 권장
+ */
 export async function putQuizTimer(
   attemptId: string | number,
   payload: { remainingSeconds: number },
@@ -1244,13 +1308,16 @@ export async function putQuizTimer(
   throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
 
+/**
+ * 문서 기준: POST /quiz/attempt/{attemptId}/save
+ */
 export async function saveQuizAnswers(
   attemptId: string | number,
   payload: QuizSavePayload,
   init?: Pick<RequestInit, "signal" | "keepalive">
 ): Promise<QuizSaveResponse | null> {
   const candidates = [
-    `${EDU_BASE}/quiz/attempt/${encodeURIComponent(String(attemptId))}/save`,
+    `${EDU_BASE}/quiz/attempt/${encodeURIComponent(String(attemptId))}/save`, // 문서 경로 1순위
     `${EDU_BASE}/quiz/attempts/${encodeURIComponent(String(attemptId))}/save`,
   ];
 
@@ -1285,13 +1352,16 @@ export async function saveQuizAnswers(
   throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
 
+/**
+ * 문서 기준: POST /quiz/attempt/{attemptId}/submit
+ */
 export async function submitQuizAnswers(
   attemptId: string | number,
   payload: QuizSubmitPayload,
   init?: Pick<RequestInit, "signal">
 ): Promise<QuizSubmitResponse> {
   const candidates = [
-    `${EDU_BASE}/quiz/attempt/${encodeURIComponent(String(attemptId))}/submit`,
+    `${EDU_BASE}/quiz/attempt/${encodeURIComponent(String(attemptId))}/submit`, // 문서 경로 1순위
     `${EDU_BASE}/quiz/attempts/${encodeURIComponent(String(attemptId))}/submit`,
     `${EDU_BASE}/quiz/attempt/${encodeURIComponent(String(attemptId))}/finish`,
   ];
@@ -1354,88 +1424,252 @@ export async function submitQuizAnswers(
   throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
 
+/**
+ * 문서 기준: GET /quiz/attempt/{attemptId}/result
+ */
+export async function getQuizAttemptResult(
+  attemptId: string | number,
+  init?: Pick<RequestInit, "signal">
+): Promise<QuizResultResponse> {
+  const url = `${EDU_BASE}/quiz/attempt/${encodeURIComponent(
+    String(attemptId)
+  )}/result`;
+
+  const raw = await eduFetch<unknown>(
+    url,
+    { method: "GET", signal: init?.signal },
+    "GET /quiz/attempt/:id/result"
+  );
+
+  const dto = unwrapRecord(raw);
+  if (!dto)
+    throw new Error(
+      "[EDU_API] getQuizAttemptResult: 응답 형식이 올바르지 않습니다."
+    );
+
+  const score = toNumOrNull(dto.score);
+  const passed = toBoolOrNull(dto.passed);
+  const correctCount = toNumOrNull(dto.correctCount);
+  const wrongCount = toNumOrNull(dto.wrongCount);
+  const totalCount = toNumOrNull(dto.totalCount);
+
+  if (
+    score === null ||
+    passed === null ||
+    correctCount === null ||
+    wrongCount === null ||
+    totalCount === null
+  ) {
+    throw new Error(
+      `[EDU_API] getQuizAttemptResult: 필수 필드 누락 (score/passed/correctCount/wrongCount/totalCount). ${keysPreview(
+        dto
+      )}`
+    );
+  }
+
+  const passScore = toNumOrNull(dto.passScore) ?? null;
+  const finishedAt =
+    typeof dto.finishedAt === "string"
+      ? dto.finishedAt
+      : typeof dto.submittedAt === "string"
+        ? dto.submittedAt
+        : undefined;
+
+  return {
+    score,
+    passed,
+    passScore,
+    correctCount,
+    wrongCount,
+    totalCount,
+    finishedAt,
+  };
+}
+
+/**
+ * 문서 기준: GET /quiz/my-attempts
+ * - 문서 요구사항: educationId query를 받아야 함
+ * - 기존 호출(getQuizMyAttempts({signal}))도 깨지지 않도록 오버로드/런타임 분기
+ */
+export async function getQuizMyAttempts(
+  init?: Pick<RequestInit, "signal">
+): Promise<QuizMyAttemptItem[]>;
+export async function getQuizMyAttempts(
+  params?: { educationId: string | number },
+  init?: Pick<RequestInit, "signal">
+): Promise<QuizMyAttemptItem[]>;
+export async function getQuizMyAttempts(
+  a?: { educationId: string | number } | Pick<RequestInit, "signal">,
+  b?: Pick<RequestInit, "signal">
+): Promise<QuizMyAttemptItem[]> {
+  const params =
+    a && isRecord(a) && "educationId" in a
+      ? (a as { educationId: string | number })
+      : undefined;
+
+  const init =
+    a && isRecord(a) && "signal" in a && !("educationId" in a)
+      ? (a as Pick<RequestInit, "signal">)
+      : b;
+
+  const qs = buildQuizQuery(params);
+  const url = `${EDU_BASE}/quiz/my-attempts${qs}`;
+
+  const raw = await eduFetch<unknown>(
+    url,
+    { method: "GET", signal: init?.signal },
+    "GET /quiz/my-attempts"
+  );
+
+  const list = extractArrayOrThrow<Record<string, unknown>>(
+    raw,
+    ["myAttempts", "my_attempts", "items", "list", "data", "result"],
+    isAttemptItem,
+    "GET /quiz/my-attempts"
+  );
+
+  return list
+    .map((it): QuizMyAttemptItem | null => {
+      const attemptId = toId(it.attemptId ?? it.attempt_id ?? it["attempt-id"]);
+      const educationId = toId(
+        it.educationId ?? it.education_id ?? it["education-id"]
+      );
+
+      const educationTitle =
+        (typeof it.educationTitle === "string" && it.educationTitle) ||
+        (typeof it.title === "string" && it.title) ||
+        "";
+
+      const score = toNumOrNull(it.score);
+      const passed = toBoolOrNull(it.passed);
+      const attemptNo = toNumOrNull(it.attemptNo ?? it.attempt_no);
+      const submittedAt =
+        typeof it.submittedAt === "string" ? it.submittedAt : "";
+
+      const isBestScore = (toBoolOrNull(it.isBestScore) ?? false) as boolean;
+
+      if (
+        !attemptId ||
+        !educationId ||
+        !educationTitle ||
+        score === null ||
+        passed === null ||
+        attemptNo === null ||
+        !submittedAt
+      ) {
+        return null;
+      }
+
+      return {
+        attemptId,
+        educationId,
+        educationTitle,
+        score,
+        passed,
+        attemptNo,
+        submittedAt,
+        isBestScore,
+      };
+    })
+    .filter((v): v is QuizMyAttemptItem => v !== null);
+}
+
+/**
+ * (호환 유지) 과거 구현은 educationId 별 my-attempts를 호출했으나,
+ * 문서 기준으로는 /quiz/my-attempts만 존재하므로 여기서는 필터링으로 제공.
+ */
 export async function getQuizEducationAttempts(
   educationId: string | number,
   init?: Pick<RequestInit, "signal">
 ): Promise<QuizAttemptSummary[]> {
-  const candidates = [
-    `${EDU_BASE}/quiz/${encodeURIComponent(String(educationId))}/my-attempts`,
-    `${EDU_BASE}/quiz/${encodeURIComponent(String(educationId))}/my_attempts`,
-    `${EDU_BASE}/quiz/${encodeURIComponent(String(educationId))}/attempts`,
-    `${EDU_BASE}/quiz/education/${encodeURIComponent(
-      String(educationId)
-    )}/my-attempts`,
-  ];
+  const eduId = String(educationId);
 
-  let lastErr: unknown = null;
-  for (const url of candidates) {
-    try {
-      const raw = await eduFetch<unknown>(
-        url,
-        { method: "GET", signal: init?.signal },
-        "GET /quiz/:educationId/my-attempts"
-      );
+  // 1) 문서 기준 /quiz/my-attempts?educationId=... (1순위)
+  try {
+    const all = await getQuizMyAttempts({ educationId: eduId }, init);
+    const filtered = all.filter((x) => x.educationId === eduId);
 
-      const list = extractArrayOrThrow<Record<string, unknown>>(
-        raw,
-        [
-          "myAttempts",
-          "my_attempts",
-          "my-attempts",
-          "attempts",
-          "items",
-          "list",
-          "data",
-          "result",
-        ],
-        isAttemptItem,
-        "GET /quiz/:educationId/my-attempts"
-      );
+    return filtered.map((x) => ({
+      attemptId: x.attemptId,
+      attemptNo: x.attemptNo,
+      status: x.submittedAt ? "SUBMITTED" : "",
+      score: x.score ?? null,
+      passed: x.passed ?? null,
+      submittedAt: x.submittedAt,
+    }));
+  } catch (e) {
+    // 2) 혹시 서버에 구(legacy) 엔드포인트가 살아있을 경우를 위한 fallback
+    const candidates = [
+      `${EDU_BASE}/quiz/${encodeURIComponent(eduId)}/my-attempts`,
+      `${EDU_BASE}/quiz/${encodeURIComponent(eduId)}/my_attempts`,
+      `${EDU_BASE}/quiz/${encodeURIComponent(eduId)}/attempts`,
+      `${EDU_BASE}/quiz/education/${encodeURIComponent(eduId)}/my-attempts`,
+    ];
 
-      return list
-        .map((it): QuizAttemptSummary | null => {
-          const attemptId = toId(
-            it.attemptId ?? it.attempt_id ?? it["attempt-id"]
-          );
-          const attemptNo = toNumOrNull(
-            it.attemptNo ?? it.attempt_no ?? it["attempt-no"]
-          );
-          const status = typeof it.status === "string" ? it.status : "";
-          if (!attemptId || attemptNo === null) return null;
+    let lastErr: unknown = e;
+    for (const url of candidates) {
+      try {
+        const raw = await eduFetch<unknown>(
+          url,
+          { method: "GET", signal: init?.signal },
+          "GET /quiz/:eduId/my-attempts (legacy)"
+        );
 
-          const score = toNumOrNull(it.score);
-          const passed = toBoolOrNull(it.passed);
+        const list = extractArrayOrThrow<Record<string, unknown>>(
+          raw,
+          ["myAttempts", "my_attempts", "my-attempts", "attempts", "items", "list", "data", "result"],
+          isAttemptItem,
+          "GET /quiz/:eduId/my-attempts (legacy)"
+        );
 
-          const startedAt =
-            typeof it.startedAt === "string" ? it.startedAt : undefined;
-          const submittedAt =
-            typeof it.submittedAt === "string" ? it.submittedAt : undefined;
+        return list
+          .map((it): QuizAttemptSummary | null => {
+            const attemptId = toId(
+              it.attemptId ?? it.attempt_id ?? it["attempt-id"]
+            );
+            const attemptNo = toNumOrNull(
+              it.attemptNo ?? it.attempt_no ?? it["attempt-no"]
+            );
+            const status = typeof it.status === "string" ? it.status : "";
+            if (!attemptId || attemptNo === null) return null;
 
-          return {
-            attemptId,
-            attemptNo,
-            status,
-            score: score ?? null,
-            passed: passed ?? null,
-            startedAt,
-            submittedAt,
-          };
-        })
-        .filter((v): v is QuizAttemptSummary => v !== null);
-    } catch (e) {
-      lastErr = e;
+            const score = toNumOrNull(it.score);
+            const passed = toBoolOrNull(it.passed);
+
+            const startedAt =
+              typeof it.startedAt === "string" ? it.startedAt : undefined;
+            const submittedAt =
+              typeof it.submittedAt === "string" ? it.submittedAt : undefined;
+
+            return {
+              attemptId,
+              attemptNo,
+              status,
+              score: score ?? null,
+              passed: passed ?? null,
+              startedAt,
+              submittedAt,
+            };
+          })
+          .filter((v): v is QuizAttemptSummary => v !== null);
+      } catch (e2) {
+        lastErr = e2;
+      }
     }
-  }
 
-  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+  }
 }
 
+/**
+ * 문서 기준: GET /quiz/{eduId}/retry-info
+ */
 export async function getQuizRetryInfo(
   educationId: string | number,
   init?: Pick<RequestInit, "signal">
 ): Promise<QuizRetryInfo> {
   const candidates = [
-    `${EDU_BASE}/quiz/${encodeURIComponent(String(educationId))}/retry-info`,
+    `${EDU_BASE}/quiz/${encodeURIComponent(String(educationId))}/retry-info`, // 문서 경로 1순위
     `${EDU_BASE}/quiz/${encodeURIComponent(String(educationId))}/retry_info`,
     `${EDU_BASE}/quiz/${encodeURIComponent(String(educationId))}/retry`,
     `${EDU_BASE}/quiz/retry-info/${encodeURIComponent(String(educationId))}`,
@@ -1447,7 +1681,7 @@ export async function getQuizRetryInfo(
       const raw = await eduFetch<unknown>(
         url,
         { method: "GET", signal: init?.signal },
-        "GET /quiz/:educationId/retry-info"
+        "GET /quiz/:eduId/retry-info"
       );
 
       const dto = unwrapRecord(raw);
@@ -1461,9 +1695,9 @@ export async function getQuizRetryInfo(
       );
       const currentAttemptCount = toNumOrNull(
         dto.currentAttemptCount ??
-          dto.current_attempt_count ??
-          dto.usedAttempts ??
-          dto.used
+        dto.current_attempt_count ??
+        dto.usedAttempts ??
+        dto.used
       );
       const maxAttempts = toNumOrNull(dto.maxAttempts ?? dto.max_attempts);
       const remainingAttempts = toNumOrNull(
@@ -1480,7 +1714,23 @@ export async function getQuizRetryInfo(
         );
       }
 
+      // 문서 확장 필드(옵션)
+      const educationIdOut = toId(dto.educationId ?? dto.education_id);
+      const educationTitleOut =
+        typeof dto.educationTitle === "string"
+          ? dto.educationTitle
+          : typeof dto.education_title === "string"
+            ? (dto.education_title as string)
+            : undefined;
+
+      const lastAttemptAt =
+        typeof dto.lastAttemptAt === "string" ? dto.lastAttemptAt : undefined;
+
       return {
+        ...(educationIdOut ? { educationId: educationIdOut } : null),
+        ...(educationTitleOut ? { educationTitle: educationTitleOut } : null),
+        ...(lastAttemptAt ? { lastAttemptAt } : null),
+
         canRetry,
         currentAttemptCount,
         maxAttempts: maxAttempts ?? null,
@@ -1496,14 +1746,17 @@ export async function getQuizRetryInfo(
   throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
 
+/**
+ * 문서 기준: GET /quiz/{attemptId}/wrongs
+ */
 export async function getQuizWrongs(
   attemptId: string | number,
   init?: Pick<RequestInit, "signal">
 ): Promise<QuizWrongNoteItem[]> {
   const candidates = [
+    `${EDU_BASE}/quiz/${encodeURIComponent(String(attemptId))}/wrongs`, // 문서 경로 1순위
     `${EDU_BASE}/quiz/attempt/${encodeURIComponent(String(attemptId))}/wrongs`,
     `${EDU_BASE}/quiz/attempts/${encodeURIComponent(String(attemptId))}/wrongs`,
-    `${EDU_BASE}/quiz/${encodeURIComponent(String(attemptId))}/wrongs`,
   ];
 
   let lastErr: unknown = null;
@@ -1512,14 +1765,14 @@ export async function getQuizWrongs(
       const raw = await eduFetch<unknown>(
         url,
         { method: "GET", signal: init?.signal },
-        "GET /quiz/attempt/:id/wrongs"
+        "GET /quiz/:attemptId/wrongs"
       );
 
       const list = extractArrayOrThrow<Record<string, unknown>>(
         raw,
         ["wrongs", "wrongList", "items", "list", "data", "result"],
         isWrongItem,
-        "GET /quiz/attempt/:id/wrongs"
+        "GET /quiz/:attemptId/wrongs"
       );
 
       return list.map((it) => ({
@@ -1541,13 +1794,16 @@ export async function getQuizWrongs(
   throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
 
+/**
+ * 문서 기준: POST /quiz/attempt/{attemptId}/leave
+ */
 export async function postQuizLeave(
   attemptId: string | number,
   payload: QuizLeavePayload,
   init?: Pick<RequestInit, "signal" | "keepalive">
 ): Promise<QuizLeaveResponse | null> {
   const candidates = [
-    `${EDU_BASE}/quiz/attempt/${encodeURIComponent(String(attemptId))}/leave`,
+    `${EDU_BASE}/quiz/attempt/${encodeURIComponent(String(attemptId))}/leave`, // 문서 경로 1순위
     `${EDU_BASE}/quiz/attempts/${encodeURIComponent(String(attemptId))}/leave`,
     `${EDU_BASE}/quiz/leave/${encodeURIComponent(String(attemptId))}`,
   ];

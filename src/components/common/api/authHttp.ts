@@ -1,4 +1,4 @@
-// src/components/chatbot/authHttp.ts
+// src/components/common/api/authHttp.ts
 import keycloak from "../../../keycloak";
 
 type JsonLike = unknown;

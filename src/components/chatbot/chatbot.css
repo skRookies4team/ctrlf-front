@@ -1346,6 +1346,50 @@
   min-height: 0;
 }
 
+.cb-edu-toast-stack {
+  position: absolute;
+  right: 18px;
+  bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  z-index: 60;
+  pointer-events: none;
+  max-width: min(360px, calc(100% - 32px));
+}
+
+.cb-edu-toast {
+  width: fit-content;
+  max-width: 100%;
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid #e5e7eb;
+  border-left-width: 6px;
+  border-radius: 14px;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.35;
+  color: #111827;
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.14);
+  backdrop-filter: blur(8px);
+}
+
+.cb-edu-toast--success {
+  border-left-color: #10b981;
+}
+
+.cb-edu-toast--error {
+  border-left-color: #ef4444;
+}
+
+.cb-edu-toast--warn {
+  border-left-color: #f59e0b;
+}
+
+.cb-edu-toast--info {
+  border-left-color: #3b82f6;
+}
+
 .cb-edu-header {
   margin-bottom: 24px;
 }

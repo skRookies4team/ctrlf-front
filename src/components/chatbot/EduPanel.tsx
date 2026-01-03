@@ -98,7 +98,11 @@ function isTimeoutError(e: unknown): boolean {
  * - onTimeout에서 AbortController.abort()를 호출해 실제 fetch도 끊을 수 있게 함
  * - fetchJson이 fetch 이전 단계에서 멈춰도 race로 UI는 탈출 가능
  */
-function withTimeout<T>(p: Promise<T>, ms: number, onTimeout?: () => void): Promise<T> {
+function withTimeout<T>(
+  p: Promise<T>,
+  ms: number,
+  onTimeout?: () => void
+): Promise<T> {
   let t: ReturnType<typeof setTimeout> | null = null;
 
   const timeoutP = new Promise<never>((_, reject) => {
@@ -149,14 +153,43 @@ function normalizeResumeSeconds(raw: number, durationSec: number): number {
   return raw;
 }
 
+function readNumberField<T extends object>(obj: T, key: string): number | undefined {
+  const v = (obj as unknown as Record<string, unknown>)[key];
+  return typeof v === "number" && Number.isFinite(v) ? v : undefined;
+}
+
+function readBoolField<T extends object>(obj: T, key: string): boolean | undefined {
+  const v = (obj as unknown as Record<string, unknown>)[key];
+  return typeof v === "boolean" ? v : undefined;
+}
+
+function progressFromResumeSeconds(resumeSec: number, durationSec: number): number {
+  if (!Number.isFinite(durationSec) || durationSec <= 0) return 0;
+  if (!Number.isFinite(resumeSec) || resumeSec <= 0) return 0;
+  return clamp((resumeSec / durationSec) * 100, 0, 100);
+}
+
+function normalizeCompletedFlag(progressPercent: number, completed?: boolean): boolean {
+  if (completed === true) return true;
+  return progressPercent >= 100;
+}
+
 type EduVideoStatusKey = "not-started" | "in-progress" | "completed";
 
 type UiVideo = {
   id: string;
   title: string;
   videoUrl?: string; // 원본(or 이미 playable인) URL
-  progress?: number;
+
+  // 목록에서도 resumeSeconds -> % 정규화가 가능해짐
+  durationSeconds?: number;
+
+  // progress는 “표시용 %”로 통일(= resumeSeconds 기반으로 정규화된 값)
+  progress?: number; // 0..100
+
+  // 이어보기 초(정규화된 값)
   resumeSeconds?: number;
+
   completed?: boolean;
 };
 
@@ -323,24 +356,70 @@ function mergeExternalProgress(sections: UiSection[], progressMap?: VideoProgres
 }
 
 function toUiVideo(v: EducationVideoItem): UiVideo {
-  const p = typeof v.progressPercent === "number" ? clamp(v.progressPercent, 0, 100) : 0;
-  const resume =
-    typeof v.resumePositionSeconds === "number" ? Math.max(0, v.resumePositionSeconds) : undefined;
+  // 서버 필드 케이스 대응:
+  // - progressPercent (동일)
+  // - durationSeconds | duration
+  // - resumePositionSeconds | resumePosition
+  // - completed | isCompleted
+  const pRaw = readNumberField(v, "progressPercent") ?? 0;
+  const p = clamp(pRaw, 0, 100);
+
+  const durationSec =
+    readNumberField(v, "durationSeconds") ??
+    readNumberField(v, "duration") ??
+    undefined;
+
+  const resumeRaw =
+    readNumberField(v, "resumePositionSeconds") ??
+    readNumberField(v, "resumePosition") ??
+    undefined;
+
+  const completedRaw =
+    readBoolField(v, "completed") ??
+    readBoolField(v, "isCompleted") ??
+    undefined;
+
+  const completed = normalizeCompletedFlag(p, completedRaw);
+
+  // resumeSeconds 정규화(초/ms 혼입 방어) + 완료면 duration으로 정리
+  let resumeSeconds: number | undefined = undefined;
+  if (typeof resumeRaw === "number") {
+    if (typeof durationSec === "number" && durationSec > 0) {
+      resumeSeconds = normalizeResumeSeconds(resumeRaw, durationSec);
+    } else {
+      resumeSeconds = Math.max(0, resumeRaw);
+    }
+  }
+
+  if (completed && typeof durationSec === "number" && durationSec > 0) {
+    resumeSeconds = durationSec;
+  }
+
+  // 표시용 progress는 “항상 resumeSeconds 기반”으로 통일(가능할 때)
+  // - duration/resume가 없으면 서버 progressPercent fallback
+  // - 완료면 무조건 100
+  let progress = p;
+  if (completed) {
+    progress = 100;
+  } else if (typeof durationSec === "number" && durationSec > 0 && typeof resumeSeconds === "number") {
+    progress = progressFromResumeSeconds(resumeSeconds, durationSec);
+  }
 
   return {
     id: v.id,
     title: v.title,
-    videoUrl: v.fileUrl,
-    progress: p,
-    resumeSeconds: resume,
-    completed: v.completed ?? (p >= 100 ? true : undefined),
+    videoUrl: (v as unknown as { fileUrl?: string }).fileUrl, // 기존 코드 유지 목적(필드명)
+    durationSeconds: durationSec,
+    progress,
+    resumeSeconds,
+    completed,
   };
 }
 
 function isSectionDone(section: UiSection): boolean {
   if (section.completed) return true;
   if (!section.videos || section.videos.length === 0) return false;
-  return section.videos.every((v) => (v.completed ?? false) || (v.progress ?? 0) >= 100);
+  return section.videos.every((v) => Boolean(v.completed) || (v.progress ?? 0) >= 100);
 }
 
 // “playable URL 판별”
@@ -382,6 +461,20 @@ function getCachedUrl(
   return hit.url;
 }
 
+/**
+ * 최소 토스트 구현 (외부 의존 없이 패널 내부에서만 표시)
+ * - 스팸 방지를 위해 key별 쿨다운 적용
+ */
+type ToastVariant = "info" | "success" | "warn" | "error";
+type ToastItem = { id: string; message: string; variant: ToastVariant };
+
+function nowMs() {
+  return Date.now();
+}
+function uid() {
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
 const EduPanel: React.FC<EduPanelProps> = ({
   anchor,
   onClose,
@@ -416,7 +509,9 @@ const EduPanel: React.FC<EduPanelProps> = ({
 
     if (!hasDOM) return { top: 80, left: 120 };
 
-    const pos = anchor ? computePanelPosition(anchor, initialSize) : computeDockFallbackPos(initialSize);
+    const pos = anchor
+      ? computePanelPosition(anchor, initialSize)
+      : computeDockFallbackPos(initialSize);
     return clampPanelPos(pos, initialSize, initialTopSafe);
   });
 
@@ -522,7 +617,92 @@ const EduPanel: React.FC<EduPanelProps> = ({
   const watchTimeAccumRef = useRef<number>(0);
 
   const progressAbortRef = useRef<AbortController | null>(null);
+
+  /**
+   * 완료 관련:
+   * - completedSentRef: "서버(또는 서버 결과 기반)로 완료 확정된 상태"로 취급
+   * - completeRequestPosRef: 완료 플러시 요청을 중복으로 날리지 않기 위한 마지막 요청 position(초)
+   */
   const completedSentRef = useRef<boolean>(false);
+  const completeRequestPosRef = useRef<number | null>(null);
+
+  // =========================
+  // progress 저장 상태(Watch UI 표시용)
+  // =========================
+  type SaveStatus = "idle" | "saving" | "saved" | "error";
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
+  const saveStatusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearSaveTimer = useCallback(() => {
+    if (saveStatusTimerRef.current) {
+      clearTimeout(saveStatusTimerRef.current);
+      saveStatusTimerRef.current = null;
+    }
+  }, []);
+
+  const setSaveStatusTransient = useCallback(
+    (status: SaveStatus, backToIdleMs: number) => {
+      setSaveStatus(status);
+      clearSaveTimer();
+      saveStatusTimerRef.current = setTimeout(() => {
+        setSaveStatus("idle");
+      }, backToIdleMs);
+    },
+    [clearSaveTimer]
+  );
+
+  // =========================
+  // toast state
+  // =========================
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const toastTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const toastCooldownRef = useRef<Map<string, number>>(new Map());
+
+  const removeToast = useCallback((id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+    const tm = toastTimersRef.current.get(id);
+    if (tm) clearTimeout(tm);
+    toastTimersRef.current.delete(id);
+  }, []);
+
+  const pushToast = useCallback(
+    (message: string, variant: ToastVariant = "info", ttlMs = 2400) => {
+      const id = uid();
+      setToasts((prev) => {
+        const next = [...prev, { id, message, variant }];
+        // 너무 길어지면 최근 4개만 유지
+        return next.slice(-4);
+      });
+
+      const tm = setTimeout(() => removeToast(id), ttlMs);
+      toastTimersRef.current.set(id, tm);
+    },
+    [removeToast]
+  );
+
+  const pushToastOnce = useCallback(
+    (key: string, message: string, variant: ToastVariant, cooldownMs: number) => {
+      const last = toastCooldownRef.current.get(key) ?? 0;
+      const n = nowMs();
+      if (n - last < cooldownMs) return;
+      toastCooldownRef.current.set(key, n);
+      pushToast(message, variant);
+    },
+    [pushToast]
+  );
+
+  // unmount cleanup
+  useEffect(() => {
+    // eslint react-hooks/exhaustive-deps 경고 방지: cleanup에서 ref.current 직접 참조하지 않도록 캡처
+    const toastTimers = toastTimersRef.current;
+    const toastCooldown = toastCooldownRef.current;
+
+    return () => {
+      for (const [, tm] of toastTimers.entries()) clearTimeout(tm);
+      toastTimers.clear();
+      toastCooldown.clear();
+      clearSaveTimer();
+    };
+  }, [clearSaveTimer]);
 
   // =========================
   // presign 결과 캐시/상태 + resolve 제어 state/ref
@@ -588,7 +768,10 @@ const EduPanel: React.FC<EduPanelProps> = ({
 
       // playable이면 그대로
       if (isPlayableUrl(raw)) {
-        presignCacheRef.current.set(raw, { url: raw, expiresAtMs: Date.now() + 365 * 24 * 60 * 60 * 1000 });
+        presignCacheRef.current.set(raw, {
+          url: raw,
+          expiresAtMs: Date.now() + 365 * 24 * 60 * 60 * 1000,
+        });
         setPresignState(videoId, { status: "ready", url: raw });
         return raw;
       }
@@ -641,6 +824,10 @@ const EduPanel: React.FC<EduPanelProps> = ({
 
           const msg = "영상 URL을 준비하지 못했습니다. 잠시 후 다시 시도해 주세요.";
           setPresignState(videoId, { status: "error", message: msg });
+
+          // 리스트에서도 사용자 인지가 필요하므로 토스트 1회
+          pushToastOnce(`presign:${videoId}`, "영상 URL 준비에 실패했습니다.", "error", 8000);
+
           throw e;
         })
         .finally(() => {
@@ -655,12 +842,38 @@ const EduPanel: React.FC<EduPanelProps> = ({
       presignInFlightRef.current.set(raw, p);
       return p;
     },
-    [abortWatchResolve, setPresignState]
+    [abortWatchResolve, setPresignState, pushToastOnce]
   );
+
+  // =========================
+  // (1) getResumeSeconds (실사용)
+  // - 서버에 보낼 position/resume는 currentTime이 아니라 "실제로 본 최대 시점" 기반이 더 안전
+  // =========================
+  const getResumeSeconds = useCallback((): number => {
+    const v = videoRef.current;
+    const duration = videoDurationRef.current || v?.duration || 0;
+
+    // 기준: 최대 시청 시점(가드/누적 기준) 우선
+    let sec = Number.isFinite(maxWatchedTimeRef.current)
+      ? maxWatchedTimeRef.current
+      : v?.currentTime ?? 0;
+
+    if (!Number.isFinite(sec) || sec < 0) sec = 0;
+
+    if (Number.isFinite(duration) && duration > 0) {
+      // 끝 근처면 duration으로 정리(완료 판정/서버 처리 안정화)
+      if (sec >= Math.max(0, duration - 0.25)) sec = duration;
+      sec = clamp(sec, 0, duration);
+    }
+
+    return Math.max(0, Math.floor(sec));
+  }, []);
 
   // =========================
   // 1) 교육 목록 로드
   // =========================
+  const manualReloadRef = useRef<boolean>(false);
+
   useEffect(() => {
     if (!hasDOM) return;
 
@@ -683,6 +896,11 @@ const EduPanel: React.FC<EduPanelProps> = ({
         if (!alive) return;
         setEducations(list);
         syncCachesForEducationList(list);
+
+        if (manualReloadRef.current) {
+          manualReloadRef.current = false;
+          pushToast("교육 목록이 업데이트되었습니다.", "success");
+        }
       })
       .catch((e: unknown) => {
         if (!alive) return;
@@ -693,11 +911,20 @@ const EduPanel: React.FC<EduPanelProps> = ({
         // timeout은 무한 로딩 대신 에러로 전환
         if (timedOut || isTimeoutError(e)) {
           setEduError("교육 목록 요청 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요.");
+          if (manualReloadRef.current) {
+            manualReloadRef.current = false;
+            pushToast("교육 목록 새로고침에 실패했습니다.", "error");
+          }
           return;
         }
 
         console.warn("[EduPanel] getMyEducations failed", e);
         setEduError("교육 목록을 불러오지 못했습니다.");
+
+        if (manualReloadRef.current) {
+          manualReloadRef.current = false;
+          pushToast("교육 목록 새로고침에 실패했습니다.", "error");
+        }
       })
       .finally(() => {
         if (!alive) return;
@@ -708,7 +935,7 @@ const EduPanel: React.FC<EduPanelProps> = ({
       alive = false;
       ac.abort();
     };
-  }, [hasDOM, syncCachesForEducationList, eduReloadKey]);
+  }, [hasDOM, syncCachesForEducationList, eduReloadKey, pushToast]);
 
   const ensureVideosLoaded = useCallback(async (educationId: string) => {
     const state = videosByEduIdRef.current[educationId];
@@ -817,6 +1044,25 @@ const EduPanel: React.FC<EduPanelProps> = ({
     if (!section) return false;
     return isSectionDone(section);
   }, [selectedVideo, sections]);
+
+  // =========================
+  // 2-A) 섹션 완료 토스트 (완료 전환 감지)
+  // =========================
+  const sectionDoneRef = useRef<Record<string, boolean>>({});
+  useEffect(() => {
+    // watch 중에도 완료 처리(서버 응답/로컬 계산)가 올 수 있으니 항상 감지
+    for (const s of sections) {
+      const done = isSectionDone(s);
+      const prevDone = sectionDoneRef.current[s.id] ?? false;
+      if (!prevDone && done) {
+        const msg = onOpenQuizPanel
+          ? `“${s.title}” 교육을 완료했습니다. 퀴즈를 풀 수 있습니다.`
+          : `“${s.title}” 교육을 완료했습니다.`;
+        pushToastOnce(`edu-done:${s.id}`, msg, "success", 15_000);
+      }
+      sectionDoneRef.current[s.id] = done;
+    }
+  }, [sections, onOpenQuizPanel, pushToastOnce]);
 
   // =========================
   // 2-1) 리스트 썸네일 presign 백그라운드 resolve (visibleVideos 기준)
@@ -1099,15 +1345,33 @@ const EduPanel: React.FC<EduPanelProps> = ({
         const videos = st.videos.map((v) => {
           if (v.id !== videoId) return v;
 
-          const p =
+          const durationSec = v.durationSeconds;
+
+          let resume =
+            typeof nextResumeSeconds === "number" ? Math.max(0, nextResumeSeconds) : v.resumeSeconds;
+
+          let completed = videoCompleted ?? v.completed ?? false;
+
+          // nextProgressPercent가 직접 오면 일단 반영하되,
+          // resume+duration이 있으면 “표시용 progress”는 resume 기준으로 재정규화
+          let p =
             typeof nextProgressPercent === "number"
               ? clamp(nextProgressPercent, 0, 100)
               : v.progress ?? 0;
 
-          const resume =
-            typeof nextResumeSeconds === "number" ? Math.max(0, nextResumeSeconds) : v.resumeSeconds;
+          const derivedCompleted = normalizeCompletedFlag(p, completed);
+          completed = derivedCompleted;
 
-          const completed = videoCompleted ?? v.completed ?? p >= 100;
+          if (completed && typeof durationSec === "number" && durationSec > 0) {
+            resume = durationSec;
+            p = 100;
+          } else if (
+            typeof durationSec === "number" &&
+            durationSec > 0 &&
+            typeof resume === "number"
+          ) {
+            p = progressFromResumeSeconds(resume, durationSec);
+          }
 
           return { ...v, progress: p, resumeSeconds: resume, completed };
         });
@@ -1125,7 +1389,9 @@ const EduPanel: React.FC<EduPanelProps> = ({
           const st = videosByEduIdRef.current[educationId];
           if (!st || st.status !== "ready" || st.videos.length === 0) return e;
 
-          const derivedDone = st.videos.every((v) => (v.completed ?? false) || (v.progress ?? 0) >= 100);
+          const derivedDone = st.videos.every(
+            (v) => (v.completed ?? false) || (v.progress ?? 0) >= 100
+          );
           return derivedDone ? { ...e, completed: true } : e;
         });
         return next;
@@ -1134,15 +1400,12 @@ const EduPanel: React.FC<EduPanelProps> = ({
     []
   );
 
-  const getResumeSeconds = useCallback(() => {
-    const v = videoRef.current;
-    if (!v) return 0;
-    const t = maxWatchedTimeRef.current > 0 ? maxWatchedTimeRef.current : v.currentTime;
-    return Math.max(0, Math.floor(t));
-  }, []);
-
   const flushProgress = useCallback(
-    async (opts?: { force?: boolean; keepalive?: boolean }) => {
+    async (opts?: {
+      force?: boolean;
+      keepalive?: boolean;
+      reason?: "pause" | "back" | "close" | "ended" | "complete";
+    }) => {
       const sel = selectedVideoRef.current;
       const v = videoRef.current;
       if (!sel || !v) return;
@@ -1150,50 +1413,126 @@ const EduPanel: React.FC<EduPanelProps> = ({
       const watchTime = Math.round(watchTimeAccumRef.current);
       if (!opts?.force && watchTime < 1) return;
 
-      const position = Math.max(0, Math.floor(v.currentTime));
+      // (1) position은 currentTime이 아니라 "최대 시청 시점" 기반으로 보냄
+      const position = getResumeSeconds();
 
       abortInFlightProgress();
       const ac = new AbortController();
       progressAbortRef.current = ac;
 
+      // force flush인 경우에만 UI에 "저장중" 표시
+      if (opts?.force) setSaveStatus("saving");
+
+      const educationId = sel.educationId;
+      const videoId = sel.id;
+
       try {
         const res = await postEduVideoProgress(
-          sel.educationId,
-          sel.id,
+          educationId,
+          videoId,
           { position, watchTime },
           { signal: ac.signal, keepalive: opts?.keepalive }
         );
 
+        // 이 요청이 최신 요청인지 확인(최신만 진행표시/상태 업데이트)
+        if (progressAbortRef.current === ac) progressAbortRef.current = null;
+
         watchTimeAccumRef.current = 0;
 
-        const nextProgress = typeof res?.progressPercent === "number" ? res.progressPercent : undefined;
+        const duration = videoDurationRef.current || v.duration || 0;
 
-        const nextResume =
-          typeof res?.resumePositionSeconds === "number" ? res.resumePositionSeconds : position;
+        const serverProgress =
+          typeof res?.progressPercent === "number" ? clamp(res.progressPercent, 0, 100) : undefined;
 
-        const videoCompleted =
-          typeof res?.videoCompleted === "boolean"
-            ? res.videoCompleted
-            : nextProgress !== undefined
-              ? nextProgress >= 100
-              : undefined;
+        const rawResume =
+          typeof res?.resumePositionSeconds === "number"
+            ? res.resumePositionSeconds
+            : (res as unknown as Record<string, unknown>)["resumePosition"] as number | undefined;
 
-        const eduCompleted = typeof res?.eduCompleted === "boolean" ? res.eduCompleted : undefined;
+        const normalizedResume =
+          typeof rawResume === "number"
+            ? normalizeResumeSeconds(rawResume, duration)
+            : position;
 
-        if (nextProgress !== undefined) {
-          syncProgressToParent(sel.id, clamp(nextProgress, 0, 100), nextResume, Boolean(videoCompleted));
-        } else {
-          const localPercent = clamp(Math.round(watchPercentRef.current), 0, 100);
-          syncProgressToParent(sel.id, localPercent, nextResume, localPercent >= 100);
+        let resumeInt = Math.max(0, Math.floor(normalizedResume));
+
+        const serverVideoCompleted =
+          typeof res?.videoCompleted === "boolean" ? res.videoCompleted : undefined;
+
+        const serverEduCompleted =
+          typeof res?.eduCompleted === "boolean" ? res.eduCompleted : undefined;
+
+        const localPercent = clamp(Math.round(watchPercentRef.current), 0, 100);
+        const baseProgress = serverProgress ?? localPercent;
+
+        const derivedCompleted = normalizeCompletedFlag(baseProgress, serverVideoCompleted);
+        const finalCompleted = Boolean(derivedCompleted);
+
+        if (finalCompleted && duration > 0) {
+          resumeInt = Math.max(0, Math.floor(duration));
         }
 
-        patchLocalVideoProgress(sel.educationId, sel.id, nextProgress, nextResume, eduCompleted, videoCompleted);
+        // progress는 resume 기준으로 재정규화(가능할 때), 완료면 100 고정
+        let progressToApply = baseProgress;
+        if (finalCompleted) {
+          progressToApply = 100;
+        } else if (duration > 0) {
+          progressToApply = progressFromResumeSeconds(resumeInt, duration);
+        }
+
+        // 확정 상태 플래그 업데이트
+        completedSentRef.current = finalCompleted || completedSentRef.current;
+
+        // 부모/로컬 반영(정규화된 값)
+        syncProgressToParent(videoId, progressToApply, resumeInt, finalCompleted);
+
+        patchLocalVideoProgress(
+          educationId,
+          videoId,
+          progressToApply,
+          resumeInt,
+          serverEduCompleted,
+          finalCompleted
+        );
+
+        if (opts?.force) {
+          setSaveStatusTransient("saved", 1600);
+
+          // 토스트는 과도하면 UX가 깨지므로 '의도된 액션'에 한해 제한적으로 표시
+          if (opts.reason === "pause" || opts.reason === "back" || opts.reason === "close") {
+            pushToastOnce(`progress-saved:${videoId}`, "진행률이 저장되었습니다.", "success", 9000);
+          }
+          if (opts.reason === "ended" || opts.reason === "complete") {
+            if (finalCompleted) {
+              pushToastOnce(`video-done:${videoId}`, "시청 완료 처리되었습니다.", "success", 12_000);
+            }
+          }
+        }
       } catch (e: unknown) {
         if (isAbortError(e)) return;
         console.warn("[EduPanel] postEduVideoProgress failed", e);
+
+        if (opts?.force) {
+          setSaveStatusTransient("error", 2600);
+          pushToastOnce(
+            "progress-error",
+            "진행률 저장에 실패했습니다. 네트워크를 확인해 주세요.",
+            "error",
+            8000
+          );
+        }
+      } finally {
+        if (progressAbortRef.current === ac) progressAbortRef.current = null;
       }
     },
-    [abortInFlightProgress, patchLocalVideoProgress, syncProgressToParent]
+    [
+      abortInFlightProgress,
+      getResumeSeconds,
+      patchLocalVideoProgress,
+      pushToastOnce,
+      setSaveStatusTransient,
+      syncProgressToParent,
+    ]
   );
 
   const startTick = useCallback(() => {
@@ -1210,11 +1549,11 @@ const EduPanel: React.FC<EduPanelProps> = ({
 
     const onVisibility = () => {
       if (document.visibilityState !== "hidden") return;
-      void flushProgress({ force: true, keepalive: true });
+      void flushProgress({ force: true, keepalive: true, reason: "close" });
     };
 
     const onBeforeUnload = () => {
-      void flushProgress({ force: true, keepalive: true });
+      void flushProgress({ force: true, keepalive: true, reason: "close" });
     };
 
     document.addEventListener("visibilitychange", onVisibility);
@@ -1259,7 +1598,10 @@ const EduPanel: React.FC<EduPanelProps> = ({
   const handleVideoClick = useCallback(
     async (educationId: string, educationTitle: string, video: UiVideo) => {
       const raw = (video.videoUrl ?? "").trim();
-      if (!raw) return;
+      if (!raw) {
+        pushToast("영상 URL이 없습니다. 관리자에게 문의해 주세요.", "warn");
+        return;
+      }
 
       // watch 전환 시 이전 resolve는 abort
       abortWatchResolve();
@@ -1288,14 +1630,20 @@ const EduPanel: React.FC<EduPanelProps> = ({
         progress: base,
       });
 
+      // watch 상태 초기화
       setWatchPercent(base);
-      completedSentRef.current = base >= 100;
+
+      // 완료/완료요청 상태 초기화
+      completedSentRef.current = Boolean(video.completed) || base >= 100;
+      completeRequestPosRef.current = null;
 
       maxWatchedTimeRef.current = 0;
       videoDurationRef.current = 0;
       watchTimeAccumRef.current = 0;
       lastTimeSampleRef.current = null;
       setIsPlaying(false);
+      setSaveStatus("idle");
+      clearSaveTimer();
 
       // playable이 이미 확보되면 끝
       if (knownPlayable) {
@@ -1316,7 +1664,7 @@ const EduPanel: React.FC<EduPanelProps> = ({
         if (isAbortError(e)) return;
       }
     },
-    [abortWatchResolve, getKnownPlayableUrl, resolvePlayableUrl, setPresignState]
+    [abortWatchResolve, clearSaveTimer, getKnownPlayableUrl, pushToast, resolvePlayableUrl, setPresignState]
   );
 
   // =========================
@@ -1330,25 +1678,22 @@ const EduPanel: React.FC<EduPanelProps> = ({
     videoDurationRef.current = duration;
 
     const basePercent = clamp(selectedVideo?.progress ?? 0, 0, 100);
+    const isCompleted = Boolean(selectedVideo?.completed) || basePercent >= 100;
+
     const resumeSecondsRaw = selectedVideo?.resumeSeconds;
 
-    const fromPercent = duration > 0 ? duration * (basePercent / 100) : 0;
-
-    const fromResume =
-      typeof resumeSecondsRaw === "number" && resumeSecondsRaw > 0
-        ? duration > 0
-          ? normalizeResumeSeconds(resumeSecondsRaw, duration)
-          : Math.max(0, resumeSecondsRaw)
-        : 0;
-
-    // “이미 본 만큼”은 최소한 보장해야 seek-guard UX가 깨지지 않는다.
-    let startTime = Math.max(fromPercent, fromResume);
+    let startTime = 0;
 
     if (duration > 0) {
-      // duration 끝에 너무 붙으면 ended/seek 이슈가 있어 살짝 여유
-      startTime = clamp(startTime, 0, Math.max(0, duration - 0.25));
-    } else {
-      startTime = Math.max(0, startTime);
+      if (isCompleted) {
+        startTime = Math.max(0, duration - 0.25);
+      } else if (typeof resumeSecondsRaw === "number" && resumeSecondsRaw > 0) {
+        startTime = normalizeResumeSeconds(resumeSecondsRaw, duration);
+        startTime = clamp(startTime, 0, Math.max(0, duration - 0.25));
+      } else {
+        startTime = duration * (basePercent / 100);
+        startTime = clamp(startTime, 0, Math.max(0, duration - 0.25));
+      }
     }
 
     try {
@@ -1364,8 +1709,15 @@ const EduPanel: React.FC<EduPanelProps> = ({
     maxWatchedTimeRef.current = startTime;
     lastTimeSampleRef.current = startTime;
 
-    const derivedPercent = duration > 0 ? (startTime / duration) * 100 : basePercent;
-    setWatchPercent(clamp(Math.max(basePercent, derivedPercent), 0, 100));
+    // 표시 퍼센트도 startTime(=resume 기준)으로 단일화
+    if (isCompleted) {
+      setWatchPercent(100);
+    } else if (duration > 0) {
+      const derivedPercent = (startTime / duration) * 100;
+      setWatchPercent(clamp(derivedPercent, 0, 100));
+    } else {
+      setWatchPercent(basePercent);
+    }
   };
 
   // 앞으로 점프 seek 방지
@@ -1414,16 +1766,18 @@ const EduPanel: React.FC<EduPanelProps> = ({
 
     const newPercent = Math.min(100, (newMax / duration) * 100);
 
+    // (2) 완료는 "서버 응답으로 확정"한다.
+    // - 여기서는 완료를 로컬 확정/부모 반영하지 않고, 완료 플러시만 1회 트리거.
+    if (selectedVideo && !completedSentRef.current && Math.round(newPercent) >= 100) {
+      const reqPos = getResumeSeconds();
+      if (completeRequestPosRef.current !== reqPos) {
+        completeRequestPosRef.current = reqPos;
+        void flushProgress({ force: true, reason: "complete" });
+      }
+    }
+
     setWatchPercent((prev) => {
       const next = newPercent > prev ? newPercent : prev;
-
-      if (selectedVideo && !completedSentRef.current && Math.round(next) >= 100) {
-        completedSentRef.current = true;
-        const resume = getResumeSeconds();
-        syncProgressToParent(selectedVideo.id, 100, resume, true);
-        patchLocalVideoProgress(selectedVideo.educationId, selectedVideo.id, 100, resume, undefined, true);
-      }
-
       return next;
     });
   };
@@ -1432,19 +1786,16 @@ const EduPanel: React.FC<EduPanelProps> = ({
     setIsPlaying(false);
     stopTick();
 
-    void flushProgress({ force: true });
+    // ended도 서버 응답으로 완료 확정
+    const reqPos = getResumeSeconds();
+    completeRequestPosRef.current = reqPos;
+
+    void flushProgress({ force: true, reason: "ended" });
 
     const duration = videoDurationRef.current || videoRef.current?.duration || 0;
     if (duration > 0) {
       maxWatchedTimeRef.current = duration;
       setWatchPercent(100);
-
-      if (selectedVideo && !completedSentRef.current) {
-        completedSentRef.current = true;
-        const resume = Math.floor(duration);
-        syncProgressToParent(selectedVideo.id, 100, resume, true);
-        patchLocalVideoProgress(selectedVideo.educationId, selectedVideo.id, 100, resume, undefined, true);
-      }
     }
   };
 
@@ -1468,6 +1819,7 @@ const EduPanel: React.FC<EduPanelProps> = ({
       v.play()
         .then(() => {
           setIsPlaying(true);
+          lastTimeSampleRef.current = v.currentTime;
           startTick();
         })
         .catch(() => {
@@ -1478,7 +1830,7 @@ const EduPanel: React.FC<EduPanelProps> = ({
       v.pause();
       setIsPlaying(false);
       stopTick();
-      void flushProgress({ force: true });
+      void flushProgress({ force: true, reason: "pause" });
     }
   };
 
@@ -1490,7 +1842,10 @@ const EduPanel: React.FC<EduPanelProps> = ({
     if (!raw) return;
 
     if (isPlayableUrl(raw)) {
-      presignCacheRef.current.set(raw, { url: raw, expiresAtMs: Date.now() + 365 * 24 * 60 * 60 * 1000 });
+      presignCacheRef.current.set(raw, {
+        url: raw,
+        expiresAtMs: Date.now() + 365 * 24 * 60 * 60 * 1000,
+      });
       setPresignState(cur.id, { status: "ready", url: raw });
       setSelectedVideo((prev) => (prev && prev.id === cur.id ? { ...prev, videoUrl: raw } : prev));
       return;
@@ -1514,15 +1869,19 @@ const EduPanel: React.FC<EduPanelProps> = ({
     if (!selectedVideo) return;
     if (!onOpenQuizPanel) return;
 
-    if (!canTakeQuizForSelected) return;
+    if (!canTakeQuizForSelected) {
+      pushToastOnce("quiz-blocked", "교육 영상을 모두 시청 완료해야 퀴즈를 볼 수 있습니다.", "warn", 6000);
+      return;
+    }
 
-    void flushProgress({ force: true });
+    void flushProgress({ force: true, reason: "back" });
     onOpenQuizPanel(selectedVideo.educationId);
   };
 
   const resetWatchState = () => {
     abortInFlightProgress();
     stopTick();
+    clearSaveTimer();
 
     videoDurationRef.current = 0;
     maxWatchedTimeRef.current = 0;
@@ -1531,7 +1890,11 @@ const EduPanel: React.FC<EduPanelProps> = ({
 
     setWatchPercent(0);
     setIsPlaying(false);
+
     completedSentRef.current = false;
+    completeRequestPosRef.current = null;
+
+    setSaveStatus("idle");
   };
 
   const handleBackToList = () => {
@@ -1541,7 +1904,7 @@ const EduPanel: React.FC<EduPanelProps> = ({
       videoRef.current?.pause();
       setIsPlaying(false);
       stopTick();
-      void flushProgress({ force: true });
+      void flushProgress({ force: true, reason: "back" });
     }
 
     setSelectedVideo(null);
@@ -1574,7 +1937,7 @@ const EduPanel: React.FC<EduPanelProps> = ({
       videoRef.current?.pause();
       setIsPlaying(false);
       stopTick();
-      void flushProgress({ force: true, keepalive: true });
+      void flushProgress({ force: true, keepalive: true, reason: "close" });
     }
 
     const abortMap = videosAbortRef.current;
@@ -1590,11 +1953,12 @@ const EduPanel: React.FC<EduPanelProps> = ({
       stopTick();
       abortInFlightProgress();
       abortAllResolves();
+      clearSaveTimer();
 
       for (const [, c] of abortMap.entries()) c.abort();
       abortMap.clear();
     };
-  }, [stopTick, abortInFlightProgress, abortAllResolves]);
+  }, [stopTick, abortInFlightProgress, abortAllResolves, clearSaveTimer]);
 
   if (!hasDOM) return null;
 
@@ -1680,6 +2044,26 @@ const EduPanel: React.FC<EduPanelProps> = ({
     );
   };
 
+  // 토스트 UI (패널 내부 고정)
+  const toastStack = (
+    <div
+      className="cb-edu-toast-stack"
+      style={{ zIndex: (zIndex ?? EDU_LAYER_Z) + 10 }}
+      aria-live="polite"
+      aria-relevant="additions text"
+    >
+      {toasts.map((t) => (
+        <div
+          key={t.id}
+          className={`cb-edu-toast cb-edu-toast--${t.variant}`}
+          role={t.variant === "error" ? "alert" : "status"}
+        >
+          {t.message}
+        </div>
+      ))}
+    </div>
+  );
+
   return createPortal(
     <div
       className="cb-edu-wrapper"
@@ -1701,9 +2085,11 @@ const EduPanel: React.FC<EduPanelProps> = ({
       >
         <div
           className="cb-edu-panel cb-chatbot-panel"
-          style={{ width: size.width, height: size.height }}
+          style={{ width: size.width, height: size.height, position: "relative" }}
           onMouseDown={() => onRequestFocus?.()}
         >
+          {toastStack}
+
           <div className="cb-drag-bar" onMouseDown={handleDragMouseDown} />
 
           <div
@@ -1851,8 +2237,19 @@ const EduPanel: React.FC<EduPanelProps> = ({
                             {isPlaying ? "❚❚" : "▶"}
                           </button>
 
-                          <div className="cb-edu-watch-progress-text">
-                            {clamp(roundedWatchPercent, 0, 100)}%
+                          <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
+                            <div className="cb-edu-watch-progress-text">{clamp(roundedWatchPercent, 0, 100)}%</div>
+
+                            {/* 진행률 저장 상태(요청된 UI: 진행률/완료 상태 표시) */}
+                            <div style={{ fontSize: 12, opacity: 0.82 }}>
+                              {saveStatus === "saving"
+                                ? "저장중…"
+                                : saveStatus === "saved"
+                                  ? "저장됨"
+                                  : saveStatus === "error"
+                                    ? "저장 실패"
+                                    : null}
+                            </div>
                           </div>
                         </>
                       ) : null}
@@ -1883,7 +2280,10 @@ const EduPanel: React.FC<EduPanelProps> = ({
                   <button
                     type="button"
                     className="cb-edu-nav-btn cb-edu-refresh-btn"
-                    onClick={() => setEduReloadKey((k) => k + 1)}
+                    onClick={() => {
+                      manualReloadRef.current = true;
+                      setEduReloadKey((k) => k + 1);
+                    }}
                     disabled={eduLoading}
                     aria-label="교육 목록 새로고침"
                     title="새로고침"
@@ -1903,7 +2303,14 @@ const EduPanel: React.FC<EduPanelProps> = ({
                       <div className="cb-edu-empty-title">교육 목록 로드 실패</div>
                       <div className="cb-edu-empty-desc">{eduError}</div>
                       <div style={{ marginTop: 12, display: "flex", justifyContent: "center" }}>
-                        <button type="button" className="cb-btn cb-btn-primary" onClick={() => setEduReloadKey((k) => k + 1)}>
+                        <button
+                          type="button"
+                          className="cb-btn cb-btn-primary"
+                          onClick={() => {
+                            manualReloadRef.current = true;
+                            setEduReloadKey((k) => k + 1);
+                          }}
+                        >
                           다시 시도
                         </button>
                       </div>
@@ -1928,12 +2335,26 @@ const EduPanel: React.FC<EduPanelProps> = ({
                         const done = isSectionDone(section);
                         const showPager = section.videos.length > pageSize;
 
+                        // 진행률/완료 상태(요청된 UI) — 섹션 요약
+                        const total = section.videos.length;
+                        const doneCount = section.videos.filter(
+                          (v) => (v.completed ?? false) || (v.progress ?? 0) >= 100
+                        ).length;
+                        const avgProgress =
+                          total > 0
+                            ? Math.round(
+                              section.videos.reduce((acc, v) => acc + clamp(v.progress ?? 0, 0, 100), 0) / total
+                            )
+                            : 0;
+
                         return (
                           <div key={section.id} className="cb-edu-section">
                             <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
                               <div className="cb-edu-section-title">{section.title}</div>
+
                               <div style={{ fontSize: 12, opacity: 0.85 }}>
-                                {section.eduType ? section.eduType : "교육"} · {done ? "완료" : "진행 중"}
+                                {section.eduType ? section.eduType : "교육"} · {done ? "완료" : "진행 중"} ·{" "}
+                                {total > 0 ? `${doneCount}/${total} 완료 · ${avgProgress}%` : "0건"}
                               </div>
 
                               <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
@@ -2046,7 +2467,15 @@ const EduPanel: React.FC<EduPanelProps> = ({
                                   </div>
 
                                   {showPager ? (
-                                    <div style={{ marginTop: 8, display: "flex", justifyContent: "center", fontSize: 12, opacity: 0.8 }}>
+                                    <div
+                                      style={{
+                                        marginTop: 8,
+                                        display: "flex",
+                                        justifyContent: "center",
+                                        fontSize: 12,
+                                        opacity: 0.8,
+                                      }}
+                                    >
                                       {currentPage + 1} / {maxPage + 1}
                                     </div>
                                   ) : null}
