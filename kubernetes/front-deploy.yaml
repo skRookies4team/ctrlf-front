@@ -47,5 +47,7 @@ spec:
         imagePullPolicy: Always
         ports:
         - containerPort: 80
+      imagePullSecrets:
+      - name: ecr-registry-helper
       # nodeSelector:
       #   zone: public
