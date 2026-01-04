@@ -35,6 +35,8 @@ type DragState = {
   startLeft: number;
 };
 
+import type { PlayEducationVideoParams } from "../../types/chat";
+
 type VideoProgressMap = Record<string, number>;
 
 export interface EduPanelProps {
@@ -54,6 +56,12 @@ export interface EduPanelProps {
 
   onRequestFocus?: () => void;
   zIndex?: number;
+
+  /** 자동 재생할 교육 영상 정보 (AI 챗봇에서 전달) */
+  initialVideo?: PlayEducationVideoParams;
+
+  /** initialVideo 처리 완료 후 호출 */
+  onInitialVideoConsumed?: () => void;
 }
 
 const ALLOW_OVERLAP_APP_HEADER = true;
@@ -483,6 +491,8 @@ const EduPanel: React.FC<EduPanelProps> = ({
   onUpdateVideoProgress,
   onRequestFocus,
   zIndex,
+  initialVideo,
+  onInitialVideoConsumed,
 }) => {
   const hasDOM = typeof window !== "undefined" && typeof document !== "undefined";
 
@@ -1019,6 +1029,103 @@ const EduPanel: React.FC<EduPanelProps> = ({
       void ensureVideosLoaded(edu.id);
     }
   }, [hasDOM, educations, ensureVideosLoaded]);
+
+  // =========================
+  // 1-C) 자동 재생 처리 (AI 챗봇에서 PLAY_VIDEO 액션 감지 시)
+  // - 취소 플래그 + 요청 토큰 패턴으로 동시성/역전 방지
+  // =========================
+  const playRequestIdRef = useRef(0);
+
+  useEffect(() => {
+    // initialVideo가 없으면 스킵
+    if (!initialVideo) return;
+    // 교육 목록 로딩 중이면 대기
+    if (eduLoading) return;
+    // 교육 목록이 비어있으면 대기
+    if (educations.length === 0) return;
+
+    // 요청 토큰 증가 (최신 요청만 유효하게 처리)
+    const reqId = ++playRequestIdRef.current;
+    let cancelled = false;
+
+    const { educationId, videoId, resumePositionSeconds } = initialVideo;
+
+    // 해당 교육 찾기
+    const targetEducation = educations.find((e) => e.id === educationId);
+    if (!targetEducation) {
+      console.warn(
+        `[EduPanel] initialVideo: education not found (educationId=${educationId})`
+      );
+      onInitialVideoConsumed?.();
+      return;
+    }
+
+    // 비동기로 영상 로드 후 자동 재생
+    const loadAndPlay = async () => {
+      try {
+        // 해당 교육의 영상 목록 로드
+        await ensureVideosLoaded(educationId);
+
+        // 취소 또는 새 요청이 들어왔으면 중단
+        if (cancelled) return;
+        if (playRequestIdRef.current !== reqId) return;
+
+        // 영상 찾기 (상태가 업데이트되기 전일 수 있으므로 ref 사용)
+        const loadState = videosByEduIdRef.current[educationId];
+        const videos = loadState?.videos ?? [];
+        const targetVideo = videos.find((v) => v.id === videoId);
+
+        if (!targetVideo) {
+          console.warn(
+            `[EduPanel] initialVideo: video not found (videoId=${videoId})`
+          );
+          onInitialVideoConsumed?.();
+          return;
+        }
+
+        // 다시 취소 체크 (영상 목록 로드 후)
+        if (cancelled) return;
+        if (playRequestIdRef.current !== reqId) return;
+
+        // 영상 선택 (handleVideoClick 호출)
+        // resumePositionSeconds가 있으면 영상의 resumeSeconds를 덮어씀
+        const videoWithResume: UiVideo = resumePositionSeconds != null
+          ? { ...targetVideo, resumeSeconds: resumePositionSeconds }
+          : targetVideo;
+
+        await handleVideoClick(
+          educationId,
+          targetEducation.title,
+          videoWithResume
+        );
+
+        // 최종 취소 체크 후 완료 콜백
+        if (cancelled) return;
+        if (playRequestIdRef.current !== reqId) return;
+
+        onInitialVideoConsumed?.();
+      } catch (error) {
+        // 취소된 경우 에러 무시
+        if (cancelled) return;
+        console.error("[EduPanel] initialVideo: auto-play failed", error);
+        onInitialVideoConsumed?.();
+      }
+    };
+
+    void loadAndPlay();
+
+    // cleanup: 패널 닫힘/언마운트 시 취소
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    initialVideo,
+    eduLoading,
+    educations,
+    ensureVideosLoaded,
+    handleVideoClick,
+    onInitialVideoConsumed,
+  ]);
 
   // =========================
   // 2) 섹션 모델 구성

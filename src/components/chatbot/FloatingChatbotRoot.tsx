@@ -1,5 +1,5 @@
 // src/components/chatbot/FloatingChatbotRoot.tsx
-import React, { useEffect, useReducer, useState } from "react";
+import React, { useCallback, useEffect, useReducer, useState } from "react";
 import FloatingDock from "./FloatingDock";
 import ChatbotApp from "./ChatbotApp";
 import EduPanel from "./EduPanel";
@@ -9,6 +9,7 @@ import ReviewerDeskView from "./ReviewerDeskView";
 import CreatorStudioView from "./CreatorStudioView";
 import { initialCourses } from "./quizData";
 import type { Anchor } from "../../utils/chat";
+import type { PlayEducationVideoParams } from "../../types/chat";
 import { can, type UserRole } from "../../auth/roles";
 
 type VideoProgressMap = Record<string, number>;
@@ -315,6 +316,10 @@ const FloatingChatbotRoot: React.FC<FloatingChatbotRootProps> = ({
     {}
   );
 
+  // 교육 영상 자동 재생 대기 상태 (AI 응답에서 PLAY_VIDEO 액션 감지 시)
+  const [pendingVideoPlay, setPendingVideoPlay] =
+    useState<PlayEducationVideoParams | null>(null);
+
   const isChatbotOpen = panels.open.chat;
 
   useEffect(() => {
@@ -396,7 +401,23 @@ const FloatingChatbotRoot: React.FC<FloatingChatbotRootProps> = ({
 
   const handleCloseEduPanel = () => {
     dispatch({ type: "CLOSE", id: "edu" });
+    // 패널 닫을 때 대기 중인 영상 재생 정보 초기화
+    setPendingVideoPlay(null);
   };
+
+  /**
+   * AI 응답에서 영상 재생 액션이 감지되었을 때 호출
+   * - EduPanel을 열고 해당 영상을 자동 재생하도록 설정
+   */
+  const handlePlayEducationVideo = useCallback(
+    (params: PlayEducationVideoParams) => {
+      // 1. 영상 재생 정보 저장
+      setPendingVideoPlay(params);
+      // 2. EduPanel 열기
+      dispatch({ type: "OPEN_EXCLUSIVE", id: "edu" });
+    },
+    []
+  );
 
   const handleOpenQuizPanel = (quizId?: string) => {
     if (quizId) {
@@ -478,6 +499,7 @@ const FloatingChatbotRoot: React.FC<FloatingChatbotRootProps> = ({
             onOpenCreatorPanel={handleOpenCreatorPanel}
             userRole={userRole}
             onRequestFocus={() => dispatch({ type: "FOCUS", id: "chat" })}
+            onPlayEducationVideo={handlePlayEducationVideo}
           />
         </div>
       )}
@@ -499,6 +521,8 @@ const FloatingChatbotRoot: React.FC<FloatingChatbotRootProps> = ({
             videoProgressMap={videoProgressMap}
             onUpdateVideoProgress={handleUpdateVideoProgress}
             onRequestFocus={() => dispatch({ type: "FOCUS", id: "edu" })}
+            initialVideo={pendingVideoPlay ?? undefined}
+            onInitialVideoConsumed={() => setPendingVideoPlay(null)}
           />
         </div>
       )}
