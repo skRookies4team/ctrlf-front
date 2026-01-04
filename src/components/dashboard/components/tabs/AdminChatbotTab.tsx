@@ -8,26 +8,20 @@ import type {
   KpiCard,
   ChatbotVolumePoint,
   ChatbotDomainShare,
-  ChatbotRouteShare,
-  PopularKeyword,
 } from "../../adminDashboardTypes";
-import {
-  getChatSummary,
-  getRouteRatio,
-  getTopKeywords,
-  getQuestionTrend,
-  getDomainRatio,
-} from "../../api/chatApi";
+import { getChatSummary, getTrends, getDomainShare } from "../../api/chatApi";
 
 interface AdminChatbotTabProps {
   period: PeriodFilter;
   selectedDept: string;
+  selectedDeptLabel: string;
   onFilterChange: (filter: CommonFilterState) => void;
 }
 
 const AdminChatbotTab: React.FC<AdminChatbotTabProps> = ({
   period,
   selectedDept,
+  selectedDeptLabel,
   onFilterChange,
 }) => {
   const [loading, setLoading] = useState(false);
@@ -44,8 +38,6 @@ const AdminChatbotTab: React.FC<AdminChatbotTabProps> = ({
   } | null>(null);
   const [volumeData, setVolumeData] = useState<ChatbotVolumePoint[]>([]);
   const [domainData, setDomainData] = useState<ChatbotDomainShare[]>([]);
-  const [routeData, setRouteData] = useState<ChatbotRouteShare[]>([]);
-  const [keywordData, setKeywordData] = useState<PopularKeyword[]>([]);
   const [trendSummary, setTrendSummary] = useState<{
     totalQuestionCount: number;
     averageQuestionCountPerPeriod: number;
@@ -66,59 +58,81 @@ const AdminChatbotTab: React.FC<AdminChatbotTabProps> = ({
     setLoading(true);
     setError(null);
     try {
-      const department = selectedDept === "ALL" ? undefined : selectedDept;
+      const department = selectedDept === "ALL" ? undefined : selectedDeptLabel;
 
-      // 병렬로 모든 API 호출
-      const [summaryRes, routeRes, keywordRes, trendRes, domainRes] =
+      // 병렬로 모든 API 호출 (구현된 API만 사용)
+      // 최근 7일 질문 수는 항상 표시해야 하므로 별도로 조회
+      const [summaryRes, weekSummaryRes, trendRes, domainRes] =
         await Promise.all([
           getChatSummary(period, department),
-          getRouteRatio(period, department),
-          getTopKeywords(period, department),
-          getQuestionTrend(period, department),
-          getDomainRatio(period, department),
+          period !== "7d" ? getChatSummary("7d", department) : null, // period가 7d가 아니면 별도 조회
+          getTrends(period, department, "week"), // bucket: "week" 기본값
+          getDomainShare(period, department),
         ]);
 
-      setSummary(summaryRes);
+      // 최근 7일 질문 수 계산
+      const last7DaysCount =
+        period === "7d"
+          ? summaryRes.periodQuestionCount || 0
+          : weekSummaryRes?.periodQuestionCount || 0;
 
-      // 질문 수 · 에러율 추이 요약 정보 저장
-      setTrendSummary({
-        totalQuestionCount: trendRes.totalQuestionCount,
-        averageQuestionCountPerPeriod: trendRes.averageQuestionCountPerPeriod,
-        averageErrorRate: trendRes.averageErrorRate,
+      // 백엔드 응답을 프론트엔드 형식으로 변환
+      setSummary({
+        todayQuestionCount: summaryRes.todayQuestionCount || 0,
+        averageResponseTime: summaryRes.avgLatencyMs || 0,
+        piiDetectionRate: (summaryRes.piiDetectRate || 0) * 100, // 0~1을 %로 변환
+        errorRate: (summaryRes.errorRate || 0) * 100, // 0~1을 %로 변환
+        last7DaysQuestionCount: last7DaysCount,
+        activeUserCount: summaryRes.activeUsers || 0,
+        satisfactionRate: (summaryRes.satisfactionRate || 0) * 100, // 0~1을 %로 변환
+        ragUsageRate: (summaryRes.ragUsageRate || 0) * 100, // 0~1을 %로 변환
       });
 
-      // 질문 수 · 에러율 추이 데이터 변환
-      setVolumeData(
-        trendRes.items.map((item) => ({
-          label: item.periodLabel,
-          count: item.questionCount,
-          errorRatio: item.errorRate / 100, // 백분율을 소수로 변환
-        }))
-      );
+      // 질문 수 · 에러율 추이 요약 정보 저장
+      if (trendRes && trendRes.series) {
+        const totalCount = trendRes.series.reduce(
+          (sum, item) => sum + (item.questionCount || 0),
+          0
+        );
+        const avgCount =
+          trendRes.series.length > 0 ? totalCount / trendRes.series.length : 0;
+        const avgError =
+          trendRes.series.length > 0
+            ? trendRes.series.reduce(
+                (sum, item) => sum + (item.errorRate || 0),
+                0
+              ) / trendRes.series.length
+            : 0;
+
+        setTrendSummary({
+          totalQuestionCount: totalCount,
+          averageQuestionCountPerPeriod: avgCount,
+          averageErrorRate: avgError * 100, // 0~1을 %로 변환
+        });
+
+        // 질문 수 · 에러율 추이 데이터 변환
+        setVolumeData(
+          trendRes.series.map((item, idx) => ({
+            label: item.bucketStart || `구간 ${idx + 1}`,
+            count: item.questionCount || 0,
+            errorRatio: item.errorRate || 0, // 이미 0~1 형식
+          }))
+        );
+      } else {
+        setTrendSummary({
+          totalQuestionCount: 0,
+          averageQuestionCountPerPeriod: 0,
+          averageErrorRate: 0,
+        });
+        setVolumeData([]);
+      }
 
       // 도메인별 질문 비율 데이터 변환
       setDomainData(
-        domainRes.items.map((item) => ({
-          id: item.domain.toLowerCase(),
-          domainLabel: item.domainName,
-          ratio: item.ratio,
-        }))
-      );
-
-      // 라우트별 질문 비율 데이터 변환
-      setRouteData(
-        routeRes.items.map((item) => ({
-          id: `route_${item.routeType.toLowerCase()}`,
-          routeLabel: item.routeName,
-          ratio: item.ratio,
-        }))
-      );
-
-      // 키워드 Top 5 데이터 변환
-      setKeywordData(
-        keywordRes.items.map((item) => ({
-          keyword: item.keyword,
-          count: item.questionCount,
+        (domainRes?.items || []).map((item) => ({
+          id: (item.domain || "").toLowerCase(),
+          domainLabel: item.label || "",
+          ratio: (item.share || 0) * 100, // 0~1을 %로 변환
         }))
       );
     } catch (err) {
@@ -129,7 +143,7 @@ const AdminChatbotTab: React.FC<AdminChatbotTabProps> = ({
     } finally {
       setLoading(false);
     }
-  }, [period, selectedDept]);
+  }, [period, selectedDept, selectedDeptLabel]);
 
   // 필터 변경 시 데이터 재조회
   useEffect(() => {
@@ -142,22 +156,22 @@ const AdminChatbotTab: React.FC<AdminChatbotTabProps> = ({
         {
           id: "todayQuestions",
           label: "오늘 질문 수",
-          value: `${summary.todayQuestionCount.toLocaleString()}건`,
+          value: `${(summary.todayQuestionCount || 0).toLocaleString()}건`,
         },
         {
           id: "avgLatency",
           label: "평균 응답 시간",
-          value: `${summary.averageResponseTime}ms`,
+          value: `${summary.averageResponseTime || 0}ms`,
         },
         {
           id: "piiRatio",
           label: "PII 감지 비율",
-          value: `${summary.piiDetectionRate.toFixed(1)}%`,
+          value: `${(summary.piiDetectionRate || 0).toFixed(1)}%`,
         },
         {
           id: "errorRatio",
           label: "에러율",
-          value: `${summary.errorRate.toFixed(1)}%`,
+          value: `${(summary.errorRate || 0).toFixed(1)}%`,
         },
       ]
     : [];
@@ -167,15 +181,15 @@ const AdminChatbotTab: React.FC<AdminChatbotTabProps> = ({
         {
           id: "weekQuestions",
           label: "최근 7일 질문 수",
-          value: `${summary.last7DaysQuestionCount.toLocaleString()}건`,
+          value: `${(summary.last7DaysQuestionCount || 0).toLocaleString()}건`,
           caption: `일평균 약 ${Math.round(
-            summary.last7DaysQuestionCount / 7
+            (summary.last7DaysQuestionCount || 0) / 7
           )}건`,
         },
         {
           id: "activeUsers",
           label: "활성 사용자 수",
-          value: `${summary.activeUserCount}명`,
+          value: `${summary.activeUserCount || 0}명`,
           caption: `최근 ${
             period === "7d" ? "7일" : period === "30d" ? "30일" : "90일"
           } 기준`,
@@ -183,13 +197,13 @@ const AdminChatbotTab: React.FC<AdminChatbotTabProps> = ({
         {
           id: "satisfaction",
           label: "응답 만족도",
-          value: `${summary.satisfactionRate.toFixed(1)}%`,
+          value: `${(summary.satisfactionRate || 0).toFixed(1)}%`,
           caption: "피드백 기준",
         },
         {
           id: "ragUsage",
           label: "RAG 사용 비율",
-          value: `${summary.ragUsageRate.toFixed(1)}%`,
+          value: `${(summary.ragUsageRate || 0).toFixed(1)}%`,
           caption: "전체 질문 대비",
         },
       ]
@@ -216,7 +230,9 @@ const AdminChatbotTab: React.FC<AdminChatbotTabProps> = ({
         value={filterValue}
         onChange={handleFilterChange}
         departments={DEPARTMENT_OPTIONS}
-        onRefresh={fetchData}
+        onRefresh={() => {
+          fetchData();
+        }}
       />
       {loading && (
         <div style={{ padding: "20px", textAlign: "center" }}>
@@ -331,49 +347,6 @@ const AdminChatbotTab: React.FC<AdminChatbotTabProps> = ({
           </div>
         </section>
       </div>
-
-      <section className="cb-admin-section">
-        <div className="cb-admin-section-header">
-          <h3 className="cb-admin-section-title">라우트별 질문 비율</h3>
-          <span className="cb-admin-section-sub">
-            RAG / LLM / Incident / FAQ 템플릿 등 라우팅 경로 기준 비중입니다.
-          </span>
-        </div>
-        <div className="cb-admin-domain-list">
-          {routeData.map((item) => (
-            <div key={item.id} className="cb-admin-domain-item">
-              <div className="cb-admin-domain-top">
-                <span className="cb-admin-domain-label">{item.routeLabel}</span>
-                <span className="cb-admin-domain-ratio">{item.ratio}%</span>
-              </div>
-              <div className="cb-admin-domain-track">
-                <div
-                  className="cb-admin-domain-fill"
-                  style={{ width: `${item.ratio}%` }}
-                />
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <section className="cb-admin-section">
-        <div className="cb-admin-section-header">
-          <h3 className="cb-admin-section-title">
-            최근 많이 질문된 키워드 Top 5
-          </h3>
-        </div>
-        <ul className="cb-admin-keyword-list">
-          {keywordData.map((item) => (
-            <li key={item.keyword} className="cb-admin-keyword-item">
-              <span className="cb-admin-keyword-label">{item.keyword}</span>
-              <span className="cb-admin-keyword-count">
-                {item.count.toLocaleString()}회
-              </span>
-            </li>
-          ))}
-        </ul>
-      </section>
     </div>
   );
 };

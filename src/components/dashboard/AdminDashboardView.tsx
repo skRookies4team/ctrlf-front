@@ -858,6 +858,7 @@ const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
             <AdminChatbotTab
               period={period}
               selectedDept={selectedDept}
+              selectedDeptLabel={selectedDeptLabel}
               onFilterChange={handleFilterChange}
             />
           )}
