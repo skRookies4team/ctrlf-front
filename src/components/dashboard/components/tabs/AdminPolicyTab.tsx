@@ -28,11 +28,13 @@ import {
   getS3PresignedUploadUrl,
   uploadFileToS3,
   retryPreprocess,
+  getPreprocessPreview,
   type PolicyListItem,
   type VersionSummary,
   type VersionDetail,
   type PolicyDetailResponse,
   type CreateVersionRequest,
+  type PreprocessPreviewResponse,
 } from "../../api/ragApi";
 
 function cx(...tokens: Array<string | false | null | undefined>) {
@@ -627,6 +629,15 @@ export default function AdminPolicyTab() {
     name: string;
     sizeBytes: number;
   } | null>(null);
+
+  // 전처리 미리보기 관련 상태
+  const [preprocessPreview, setPreprocessPreview] =
+    useState<PreprocessPreviewResponse | null>(null);
+  const [preprocessPreviewLoading, setPreprocessPreviewLoading] =
+    useState(false);
+  const [preprocessPreviewError, setPreprocessPreviewError] = useState<
+    string | null
+  >(null);
 
   // 검색어 debounce: 입력이 멈춘 후 300ms 후에 검색 실행
   useEffect(() => {
@@ -1244,6 +1255,37 @@ export default function AdminPolicyTab() {
     rightBodyRef.current?.scrollTo({ top: 0 });
   }, [rightTab, rightId]);
 
+  // PREPROCESS 탭에서 전처리 미리보기 로드
+  useEffect(() => {
+    if (rightTab === "PREPROCESS" && selected && selected.version > 0) {
+      const loadPreprocessPreview = async () => {
+        try {
+          setPreprocessPreviewLoading(true);
+          setPreprocessPreviewError(null);
+          const preview = await getPreprocessPreview(
+            selected.documentId,
+            selected.version
+          );
+          setPreprocessPreview(preview);
+        } catch (err) {
+          console.error("Failed to load preprocess preview:", err);
+          setPreprocessPreviewError(
+            "전처리 미리보기를 불러오는데 실패했습니다."
+          );
+          setPreprocessPreview(null);
+        } finally {
+          setPreprocessPreviewLoading(false);
+        }
+      };
+
+      loadPreprocessPreview();
+    } else {
+      // PREPROCESS 탭이 아니거나 선택된 버전이 없으면 상태 초기화
+      setPreprocessPreview(null);
+      setPreprocessPreviewError(null);
+    }
+  }, [rightTab, selected?.documentId, selected?.version]);
+
   const sortedVersionsInGroup = useMemo(() => {
     if (!selectedGroup) return [];
     const list = selectedGroup.versions.slice();
@@ -1507,9 +1549,12 @@ export default function AdminPolicyTab() {
     }
 
     if (rightTab === "PREPROCESS") {
+      const status =
+        preprocessPreview?.preprocessStatus || right.preprocessStatus || "IDLE";
+
       return (
         <section className="cb-policy-card">
-          <div className="cb-policy-card-title">스테이징 전처리 미리보기</div>
+          <div className="cb-policy-card-title">전처리 미리보기</div>
 
           <div className="cb-policy-preprocess">
             <div className="row">
@@ -1518,55 +1563,118 @@ export default function AdminPolicyTab() {
                 <span
                   className={cx(
                     "cb-policy-pre-badge",
-                    `is-${right.preprocessStatus.toLowerCase()}`
+                    `is-${status.toLowerCase()}`
                   )}
                 >
-                  {right.preprocessStatus}
+                  {status}
                 </span>
-                {right.preprocessStatus === "FAILED" &&
-                right.preprocessError ? (
-                  <span className="err"> {right.preprocessError}</span>
+                {status === "FAILED" && preprocessPreviewError ? (
+                  <span className="err"> {preprocessPreviewError}</span>
                 ) : null}
               </div>
             </div>
 
-            {right.preprocessStatus === "READY" && right.preprocessPreview ? (
+            {preprocessPreviewLoading ? (
+              <div className="cb-policy-empty muted">로딩 중...</div>
+            ) : preprocessPreviewError ? (
+              <div className="cb-policy-empty muted" style={{ color: "red" }}>
+                {preprocessPreviewError}
+              </div>
+            ) : preprocessPreview?.preview ? (
               <>
                 <div className="row">
-                  <div className="k">요약</div>
+                  <div className="k">전체 청크 수</div>
                   <div className="v">
-                    {right.preprocessPreview.pages}p /{" "}
-                    {right.preprocessPreview.chars.toLocaleString()} chars
+                    {preprocessPreview.preview.totalChunks.toLocaleString()}개
                   </div>
                 </div>
-                <pre className="cb-policy-excerpt">
-                  {right.preprocessPreview.excerpt}
-                </pre>
+                {preprocessPreview.preview.sampleChunks &&
+                preprocessPreview.preview.sampleChunks.length > 0 ? (
+                  <>
+                    <div className="row">
+                      <div className="k">샘플 청크</div>
+                      <div className="v">
+                        {preprocessPreview.preview.sampleChunks.length}개 표시
+                      </div>
+                    </div>
+                    <div className="cb-policy-chunks-preview">
+                      {preprocessPreview.preview.sampleChunks.map(
+                        (chunk, idx) => (
+                          <div key={idx} className="cb-policy-chunk-item">
+                            <div className="cb-policy-chunk-header">
+                              <span className="cb-policy-chunk-index">
+                                청크 #{chunk.chunkIndex}
+                              </span>
+                            </div>
+                            <pre className="cb-policy-chunk-text">
+                              {chunk.text}
+                            </pre>
+                          </div>
+                        )
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <div className="cb-policy-empty muted">
+                    샘플 청크가 없습니다.
+                  </div>
+                )}
+                {preprocessPreview.processedAt && (
+                  <div className="row">
+                    <div className="k">처리 완료 시각</div>
+                    <div className="v">
+                      {new Date(preprocessPreview.processedAt).toLocaleString()}
+                    </div>
+                  </div>
+                )}
               </>
             ) : (
               <div className="cb-policy-empty muted">
-                {right.preprocessStatus === "IDLE"
+                {status === "IDLE"
                   ? "파일 업로드 후 전처리를 실행하면 미리보기가 표시됩니다."
-                  : right.preprocessStatus === "PROCESSING"
+                  : status === "PROCESSING"
                   ? "전처리 진행 중…"
-                  : right.preprocessStatus === "FAILED"
+                  : status === "FAILED"
                   ? "전처리에 실패했습니다. 재업로드 또는 재시도하세요."
                   : "미리보기가 없습니다."}
               </div>
             )}
 
-            {right.status === "DRAFT" &&
-              right.preprocessStatus === "FAILED" && (
-                <div className="cb-policy-pre-actions">
-                  <button
-                    type="button"
-                    className="cb-admin-ghost-btn"
-                    onClick={onRetryPreprocess}
-                  >
-                    전처리 재시도
-                  </button>
-                </div>
-              )}
+            {right.status === "DRAFT" && status === "FAILED" && (
+              <div className="cb-policy-pre-actions">
+                <button
+                  type="button"
+                  className="cb-admin-ghost-btn"
+                  onClick={async () => {
+                    await onRetryPreprocess();
+                    // 재시도 후 미리보기 다시 로드
+                    if (selected && selected.version > 0) {
+                      try {
+                        setPreprocessPreviewLoading(true);
+                        setPreprocessPreviewError(null);
+                        const preview = await getPreprocessPreview(
+                          selected.documentId,
+                          selected.version
+                        );
+                        setPreprocessPreview(preview);
+                      } catch (err) {
+                        console.error(
+                          "Failed to reload preprocess preview:",
+                          err
+                        );
+                        setPreprocessPreviewError(
+                          "전처리 미리보기를 불러오는데 실패했습니다."
+                        );
+                      } finally {
+                        setPreprocessPreviewLoading(false);
+                      }
+                    }
+                  }}
+                >
+                  전처리 재시도
+                </button>
+              </div>
+            )}
           </div>
         </section>
       );

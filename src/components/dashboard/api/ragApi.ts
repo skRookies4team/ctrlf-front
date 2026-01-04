@@ -489,14 +489,25 @@ export async function uploadFileToS3(
 // ========== Preprocess API ==========
 
 /**
+ * 전처리 미리보기 청크 타입
+ */
+export interface PreprocessChunk {
+  chunkIndex: number;
+  text: string;
+}
+
+/**
  * 전처리 미리보기 응답 타입
  */
 export interface PreprocessPreviewResponse {
-  preprocessStatus: "IDLE" | "PROCESSING" | "READY" | "FAILED";
-  preprocessPages?: number;
-  preprocessChars?: number;
-  preprocessExcerpt?: string;
-  preprocessError?: string;
+  documentId: string;
+  version: number;
+  preprocessStatus: "IDLE" | "PROCESSING" | "COMPLETED" | "FAILED";
+  preview?: {
+    totalChunks: number;
+    sampleChunks: PreprocessChunk[];
+  };
+  processedAt?: string; // ISO-8601
 }
 
 /**
