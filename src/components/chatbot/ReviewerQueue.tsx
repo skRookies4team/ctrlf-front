@@ -2,7 +2,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { ReviewWorkItem } from "./reviewerDeskTypes";
 import type { ListMode, ReviewerTabId, SortMode, ReviewStageFilter } from "./useReviewerDeskController";
-import { formatDateTime } from "./reviewerDeskMocks";
+import { formatDateTime } from "./creatorStudioUtils";
 
 function cx(...tokens: Array<string | false | null | undefined>) {
     return tokens.filter(Boolean).join(" ");
@@ -343,87 +343,95 @@ const ReviewerQueue: React.FC<ReviewerQueueProps> = (props) => {
                 </div>
 
                 <div className="cb-reviewer-queue-quick">
-                    <label className="cb-reviewer-toggle cb-reviewer-toggle--pill">
-                        <input
-                            type="checkbox"
-                            checked={riskOnly}
-                            onChange={(e) => setRiskOnly(e.target.checked)}
-                            disabled={isOverlayOpen || isBusy}
-                        />
-                        리스크만
-                    </label>
+                    {/* 첫 번째 줄: 리스크만, 정렬, 리스트 */}
+                    <div className="cb-reviewer-queue-quick-row">
+                        <label className="cb-reviewer-toggle cb-reviewer-toggle--pill">
+                            <input
+                                type="checkbox"
+                                checked={riskOnly}
+                                onChange={(e) => setRiskOnly(e.target.checked)}
+                                disabled={isOverlayOpen || isBusy}
+                            />
+                            리스크만
+                        </label>
 
-                    <div className="cb-reviewer-sort">
-                        <span className="cb-reviewer-sort-label">정렬</span>
-                        <select
-                            className="cb-reviewer-sort-select"
-                            value={sortMode}
-                            onChange={(e) => setSortMode(e.target.value as SortMode)}
-                            disabled={isOverlayOpen || isBusy}
-                        >
-                            <option value="newest">최신순</option>
-                            <option value="risk">리스크 우선</option>
-                        </select>
+                        <div className="cb-reviewer-sort">
+                            <span className="cb-reviewer-sort-label">정렬</span>
+                            <select
+                                className="cb-reviewer-sort-select"
+                                value={sortMode}
+                                onChange={(e) => setSortMode(e.target.value as SortMode)}
+                                disabled={isOverlayOpen || isBusy}
+                            >
+                                <option value="newest">최신순</option>
+                                <option value="risk">리스크 우선</option>
+                            </select>
+                        </div>
+
+                        <div className="cb-reviewer-mode">
+                            <span className="cb-reviewer-sort-label">리스트</span>
+                            <button
+                                type="button"
+                                className={cx("cb-reviewer-mode-pill", isVirtual && "cb-reviewer-mode-pill--active")}
+                                onClick={() => setListMode(isVirtual ? "paged" : "virtual")}
+                                disabled={isOverlayOpen || isBusy}
+                                title={isVirtual ? "페이지네이션으로 전환" : "가상 스크롤로 전환"}
+                                aria-label={isVirtual ? "리스트 모드: 가상 스크롤" : "리스트 모드: 페이지"}
+                            >
+                                {isVirtual ? "스크롤" : "페이지"}
+                            </button>
+                        </div>
+
+                        <div className="cb-reviewer-hotkeys">↑↓ 이동 · Enter 미리보기 · / 검색</div>
                     </div>
 
-                    <div className="cb-reviewer-mode">
-                        <span className="cb-reviewer-sort-label">리스트</span>
-                        <button
-                            type="button"
-                            className={cx("cb-reviewer-mode-pill", isVirtual && "cb-reviewer-mode-pill--active")}
-                            onClick={() => setListMode(isVirtual ? "paged" : "virtual")}
-                            disabled={isOverlayOpen || isBusy}
-                            title={isVirtual ? "페이지네이션으로 전환" : "가상 스크롤로 전환"}
-                        >
-                            {isVirtual ? "가상 스크롤" : "페이지"}
-                        </button>
-                    </div>
-                    {stageCounts.all > 0 && (
-                        <div className="cb-reviewer-stage">
-                            <div className="cb-reviewer-stage-pills">
-                                <button
-                                    type="button"
-                                    className={cx("cb-reviewer-stage-pill", stageFilter === "all" && "cb-reviewer-stage-pill--active")}
-                                    onClick={() => setStageFilter("all")}
-                                    disabled={isOverlayOpen || isBusy}
-                                >
-                                    전체 <span className="cb-reviewer-stage-count">{stageCounts.all}</span>
-                                </button>
-                                <button
-                                    type="button"
-                                    className={cx("cb-reviewer-stage-pill", stageFilter === "stage1" && "cb-reviewer-stage-pill--active")}
-                                    onClick={() => setStageFilter("stage1")}
-                                    disabled={isOverlayOpen || isBusy}
-                                    title="VIDEO 1차(스크립트) 단계"
-                                >
-                                    1차 <span className="cb-reviewer-stage-count">{stageCounts.stage1}</span>
-                                </button>
-                                <button
-                                    type="button"
-                                    className={cx("cb-reviewer-stage-pill", stageFilter === "stage2" && "cb-reviewer-stage-pill--active")}
-                                    onClick={() => setStageFilter("stage2")}
-                                    disabled={isOverlayOpen || isBusy}
-                                    title="VIDEO 2차(최종) 단계"
-                                >
-                                    2차 <span className="cb-reviewer-stage-count">{stageCounts.stage2}</span>
-                                </button>
-                                <button
-                                    type="button"
-                                    className={cx(
-                                        "cb-reviewer-stage-pill",
-                                        stageFilter === "docs" && "cb-reviewer-stage-pill--active"
-                                    )}
-                                    onClick={() => setStageFilter("docs")}
-                                    disabled={isOverlayOpen || isBusy || stageCounts.docs === 0}
-                                    title="VIDEO가 아닌 문서/정책"
-                                >
-                                    문서 <span className="cb-reviewer-stage-count">{stageCounts.docs}</span>
-                                </button>
+                    {/* 두 번째 줄: 전체/1차/2차/문서 필터 */}
+                    {stageCounts && (
+                        <div className="cb-reviewer-stage-row">
+                            <div className="cb-reviewer-stage">
+                                <div className="cb-reviewer-stage-pills">
+                                    <button
+                                        type="button"
+                                        className={cx("cb-reviewer-stage-pill", stageFilter === "all" && "cb-reviewer-stage-pill--active")}
+                                        onClick={() => setStageFilter("all")}
+                                        disabled={isOverlayOpen || isBusy}
+                                    >
+                                        전체 <span className="cb-reviewer-stage-count">{stageCounts.all ?? 0}</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className={cx("cb-reviewer-stage-pill", stageFilter === "stage1" && "cb-reviewer-stage-pill--active")}
+                                        onClick={() => setStageFilter("stage1")}
+                                        disabled={isOverlayOpen || isBusy}
+                                        title="VIDEO 1차(스크립트) 단계"
+                                    >
+                                        1차 <span className="cb-reviewer-stage-count">{stageCounts.stage1 ?? 0}</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className={cx("cb-reviewer-stage-pill", stageFilter === "stage2" && "cb-reviewer-stage-pill--active")}
+                                        onClick={() => setStageFilter("stage2")}
+                                        disabled={isOverlayOpen || isBusy}
+                                        title="VIDEO 2차(최종) 단계"
+                                    >
+                                        2차 <span className="cb-reviewer-stage-count">{stageCounts.stage2 ?? 0}</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className={cx(
+                                            "cb-reviewer-stage-pill",
+                                            stageFilter === "docs" && "cb-reviewer-stage-pill--active"
+                                        )}
+                                        onClick={() => setStageFilter("docs")}
+                                        disabled={isOverlayOpen || isBusy || (stageCounts.docs ?? 0) === 0}
+                                        title="VIDEO가 아닌 문서/정책"
+                                    >
+                                        문서 <span className="cb-reviewer-stage-count">{stageCounts.docs ?? 0}</span>
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     )}
-
-                    <div className="cb-reviewer-hotkeys">↑↓ 이동 · Enter 미리보기 · / 검색</div>
                 </div>
             </div>
 

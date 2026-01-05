@@ -5496,14 +5496,15 @@
 .cb-reviewer-mode {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;  
+  margin-left: auto;
 }
 
 .cb-reviewer-mode-pill {
   border: 1px solid #e5e7eb;
   background-color: #ffffff;
   border-radius: 999px;
-  padding: 6px 10px;
+  padding: 6px 8px;  
   font-size: 11px;
   font-weight: 800;
   color: #111827;
@@ -6217,6 +6218,12 @@
 .cb-reviewer-queue-quick {
   margin-top: 10px;
   display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cb-reviewer-queue-quick-row {
+  display: flex;
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
@@ -6230,21 +6237,39 @@
   font-weight: 700;
 }
 
+/* 1) 첫 줄: 컨트롤 / 둘째 줄: hotkeys 고정 */
+.cb-reviewer-queue-quick-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap; /* nowrap 절대 금지 */
+}
+
+/* hotkeys는 항상 다음 줄로 떨어지게 */
+.cb-reviewer-hotkeys {
+  flex-basis: 100%;
+  margin-top: 2px;
+}
+
+/* 2) 정렬은 가운데(자연 배치), "리스트" 블록을 오른쪽 정렬 */
 .cb-reviewer-sort {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  margin-left: auto;
+  margin-left: 0; /* auto 제거 */
 }
 
 .cb-reviewer-sort-label {
   font-size: 11px;
   color: #6b7280;
   font-weight: 700;
+  white-space: nowrap; /* '리스트'가 리/트로 깨지는 현상 방지 */
 }
 
 .cb-reviewer-sort-select {
   height: 32px;
+  width: 80px; 
+  max-width: 96px;
   border-radius: 12px;
   border: 1px solid #e5e7eb;
   padding: 0 10px;

@@ -2,7 +2,7 @@
 import React, { useState, useSyncExternalStore } from "react";
 import type { DetailTabId } from "./useReviewerDeskController";
 import type { ReviewWorkItem } from "./reviewerDeskTypes";
-import { formatDateTime, formatDuration } from "./reviewerDeskMocks";
+import { formatDateTime, formatDuration } from "./creatorStudioUtils";
 
 import { listPolicyVersionsSnapshot, subscribePolicyStore } from "./policyStore";
 import type { PolicyDocVersion } from "./policyTypes";

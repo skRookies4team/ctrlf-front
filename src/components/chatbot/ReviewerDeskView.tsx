@@ -360,7 +360,6 @@ const ReviewerDeskView: React.FC<ReviewerDeskViewProps> = ({
     handleSaveNote,
     moveSelection,
     lastRefreshedAtLabel,
-    devtools,
     stageFilter,
     setStageFilter,
     stageCounts,
@@ -875,28 +874,7 @@ const ReviewerDeskView: React.FC<ReviewerDeskViewProps> = ({
             </div>
 
             <div className="cb-reviewer-header-actions">
-              {devtools.enabled && (
-                <>
-                  <button
-                    type="button"
-                    className="cb-reviewer-ghost-btn"
-                    onClick={devtools.toggleDataset}
-                    disabled={isBusy || isOverlayOpen}
-                    title="DEV: 대량 데이터/기본 데이터 토글"
-                  >
-                    {devtools.datasetLabel}
-                  </button>
-                  <button
-                    type="button"
-                    className="cb-reviewer-ghost-btn"
-                    onClick={devtools.simulateConflict}
-                    disabled={isBusy || isOverlayOpen || !selectedId}
-                    title="DEV: 충돌 시뮬레이션(버전/상태 변경)"
-                  >
-                    충돌 시뮬
-                  </button>
-                </>
-              )}
+              {/* devtools 제거됨 - 백엔드 API 연동 완료 */}
 
               <button
                 type="button"
