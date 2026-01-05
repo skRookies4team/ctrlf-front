@@ -112,6 +112,25 @@ export interface DecisionResponse {
 }
 
 /**
+ * Lock 획득 응답
+ * 백엔드 API에는 lock 기능이 없으므로 호환성을 위한 타입
+ */
+export interface AcquireLockResponse {
+  lockToken: string;
+  expiresAt: string; // ISO8601
+  ownerId: string;
+  ownerName: string;
+}
+
+/**
+ * Lock 해제 응답
+ * 백엔드 API에는 lock 기능이 없으므로 호환성을 위한 타입
+ */
+export interface ReleaseLockResponse {
+  released: boolean;
+}
+
+/**
  * 409 충돌 payload 권장 형태
  * - code로 충돌 원인을 명확하게 내려주면 프론트 UX가 안정된다.
  */

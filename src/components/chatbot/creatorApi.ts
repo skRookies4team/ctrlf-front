@@ -46,12 +46,6 @@ const ADMIN_VIDEO_REVIEW_REQUEST_ENDPOINT = envStr(
   `${ADMIN_VIDEOS_ENDPOINT}/{videoId}/review-request`
 );
 
-// 일부 구현에서 POST /admin/videos/review-request { videoId, reviewType }가 있을 수 있어 fallback로 둠
-const ADMIN_VIDEO_REVIEW_REQUEST_FALLBACK_ENDPOINT = envStr(
-  "VITE_ADMIN_VIDEO_REVIEW_REQUEST_FALLBACK_ENDPOINT",
-  `${ADMIN_VIDEOS_ENDPOINT}/review-request`
-);
-
 // video service (user/common)
 const VIDEO_GET_ENDPOINT = envStr("VITE_VIDEO_GET_ENDPOINT", `${EDU_BASE}/video/{videoId}`);
 const VIDEO_SOURCESET_CREATE_ENDPOINT = envStr(
@@ -242,6 +236,28 @@ function normalizeEducationDetail(raw: unknown): AdminEducationDetail {
     (isRecord(raw) && isRecord(raw["data"]) ? readStr(raw["data"], "title") : undefined) ??
     "";
 
+  // departmentScope는 JSON string으로 올 수 있음 (스펙: docs/education_api_spec.md 2.1, 2.2)
+  const deptScopeRaw = isRecord(raw) ? raw["departmentScope"] : undefined;
+  let departmentScope: string[] = [];
+  
+  if (typeof deptScopeRaw === "string" && deptScopeRaw.trim()) {
+    // JSON string인 경우 파싱
+    try {
+      const parsed = JSON.parse(deptScopeRaw);
+      departmentScope = Array.isArray(parsed) 
+        ? parsed.filter(x => typeof x === "string" && x.trim().length > 0)
+        : [];
+    } catch {
+      // 파싱 실패 시 빈 배열
+      departmentScope = [];
+    }
+  } else if (Array.isArray(deptScopeRaw)) {
+    // 이미 배열인 경우 (호환성)
+    departmentScope = deptScopeRaw
+      .map((x) => (typeof x === "string" ? x : ""))
+      .filter(Boolean);
+  }
+
   return {
     id,
     title,
@@ -252,9 +268,7 @@ function normalizeEducationDetail(raw: unknown): AdminEducationDetail {
     passRatio: readNum(raw, "passRatio"),
     startAt: (readStr(raw, "startAt") ?? null) as string | null,
     endAt: (readStr(raw, "endAt") ?? null) as string | null,
-    departmentScope: (readArr(raw, "departmentScope") ?? [])
-      .map((x) => (typeof x === "string" ? x : ""))
-      .filter(Boolean),
+    departmentScope,
     createdAt: readStr(raw, "createdAt"),
     updatedAt: readStr(raw, "updatedAt"),
   };
@@ -352,14 +366,34 @@ export async function adminGetEducationsWithVideos(params?: {
       .map(normalizeVideoSummary)
       .filter((v): v is AdminVideoSummary => Boolean(v));
 
+    // departmentScope는 JSON string으로 올 수 있음 (스펙: docs/education_api_spec.md 2.1, 2.2)
+    const deptScopeRaw = node["departmentScope"] ?? node["deptIds"];
+    let departmentScope: string[] = [];
+    
+    if (typeof deptScopeRaw === "string" && deptScopeRaw.trim()) {
+      // JSON string인 경우 파싱
+      try {
+        const parsed = JSON.parse(deptScopeRaw);
+        departmentScope = Array.isArray(parsed) 
+          ? parsed.filter(x => typeof x === "string" && x.trim().length > 0)
+          : [];
+      } catch {
+        // 파싱 실패 시 빈 배열
+        departmentScope = [];
+      }
+    } else if (Array.isArray(deptScopeRaw)) {
+      // 이미 배열인 경우 (호환성)
+      departmentScope = deptScopeRaw
+        .map((x) => (typeof x === "string" ? x : ""))
+        .filter(Boolean);
+    }
+
     out.push({
       id: eduId,
       title: readStr(node, "title") ?? readStr(node, "eduTitle") ?? "교육",
       startAt: (readStr(node, "startAt") ?? null) as string | null,
       endAt: (readStr(node, "endAt") ?? null) as string | null,
-      departmentScope: (readArr(node, "departmentScope") ?? readArr(node, "deptIds") ?? [])
-        .map((x) => (typeof x === "string" ? x : ""))
-        .filter(Boolean),
+      departmentScope,
       videos,
     });
   }
@@ -433,7 +467,7 @@ export async function getVideo(videoId: string): Promise<VideoDetail> {
  *   - SCRIPT_READY → SCRIPT_REVIEW_REQUESTED (1차)
  *   - READY → FINAL_REVIEW_REQUESTED (2차)
  */
-export async function requestVideoReview(videoId: string, reviewType: "SCRIPT" | "FINAL"): Promise<void> {
+export async function requestVideoReview(videoId: string): Promise<void> {
   const url = expandEndpoint(ADMIN_VIDEO_REVIEW_REQUEST_ENDPOINT, { videoId });
   
   // 백엔드 API 문서 기준: Body 없음

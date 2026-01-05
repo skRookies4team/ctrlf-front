@@ -385,8 +385,7 @@ export async function renameChatSession(
 
   const text = await res.text().catch(() => "");
   throw new Error(
-    `renameChatSession failed: ${res.status} ${res.statusText}${
-      text ? ` - ${text}` : ""
+    `renameChatSession failed: ${res.status} ${res.statusText}${text ? ` - ${text}` : ""
     }`
   );
 }
@@ -415,8 +414,7 @@ export async function deleteChatSession(sessionId: string): Promise<void> {
 
   const text = await res.text().catch(() => "");
   throw new Error(
-    `deleteChatSession failed: ${res.status} ${res.statusText}${
-      text ? ` - ${text}` : ""
+    `deleteChatSession failed: ${res.status} ${res.statusText}${text ? ` - ${text}` : ""
     }`
   );
 }
@@ -572,14 +570,13 @@ export async function getChatSessions(): Promise<ChatSessionResponse[]> {
   if (!res.ok) {
     const bodyText = await res.text().catch(() => "");
     throw new Error(
-      `Get sessions failed: ${res.status} ${res.statusText}${
-        bodyText ? ` - ${bodyText}` : ""
+      `Get sessions failed: ${res.status} ${res.statusText}${bodyText ? ` - ${bodyText}` : ""
       }`
     );
   }
 
   const data: unknown = await res.json().catch(() => null);
-  
+
   // 배열 형태 응답 처리
   if (Array.isArray(data)) {
     return data.filter(
@@ -626,8 +623,7 @@ async function createChatSession(
   if (!res.ok) {
     const bodyText = await res.text().catch(() => "");
     throw new Error(
-      `Create session failed: ${res.status} ${res.statusText}${
-        bodyText ? ` - ${bodyText}` : ""
+      `Create session failed: ${res.status} ${res.statusText}${bodyText ? ` - ${bodyText}` : ""
       }`
     );
   }
@@ -661,8 +657,7 @@ async function sendChatMessage(
   if (!res.ok) {
     const bodyText = await res.text().catch(() => "");
     throw new Error(
-      `Send message failed: ${res.status} ${res.statusText}${
-        bodyText ? ` - ${bodyText}` : ""
+      `Send message failed: ${res.status} ${res.statusText}${bodyText ? ` - ${bodyText}` : ""
       }`
     );
   }
@@ -711,8 +706,8 @@ async function sendChatMessage(
           typeof actionData["resume_position_seconds"] === "number"
             ? actionData["resume_position_seconds"]
             : typeof actionData["resumePositionSeconds"] === "number"
-            ? actionData["resumePositionSeconds"]
-            : undefined,
+              ? actionData["resumePositionSeconds"]
+              : undefined,
         educationTitle:
           nonEmptyString(actionData["education_title"]) ??
           nonEmptyString(actionData["educationTitle"]) ??
@@ -725,8 +720,8 @@ async function sendChatMessage(
           typeof actionData["progress_percent"] === "number"
             ? actionData["progress_percent"]
             : typeof actionData["progressPercent"] === "number"
-            ? actionData["progressPercent"]
-            : undefined,
+              ? actionData["progressPercent"]
+              : undefined,
       };
     }
   }
@@ -882,9 +877,7 @@ export async function retryMessage(
   messageId: string
 ): Promise<ChatSendResult> {
   const token = await ensureFreshToken();
-  if (!token) {
-    throw new Error("Not authenticated: Keycloak token is missing.");
-  }
+  if (!token) throw new Error("Not authenticated: Keycloak token is missing.");
 
   if (!isUuidLike(sessionId) || !isUuidLike(messageId)) {
     throw new Error("Retry failed: sessionId/messageId must be UUID.");
@@ -902,36 +895,67 @@ export async function retryMessage(
     DEFAULT_TIMEOUT_MS
   );
 
+  // 에러면 텍스트 그대로 포함
   if (!res.ok) {
     const bodyText = await res.text().catch(() => "");
     throw new Error(
-      `Retry failed: ${res.status} ${res.statusText}${
-        bodyText ? ` - ${bodyText}` : ""
+      `Retry failed: ${res.status} ${res.statusText}${bodyText ? ` - ${bodyText}` : ""
       }`
     );
   }
 
-  const data: unknown = await res.json().catch(() => null);
-  if (
-    isRecord(data) &&
-    nonEmptyString(data["content"]) &&
-    nonEmptyString(data["messageId"])
-  ) {
+  // (중요) 바디는 1번만 읽는다
+  const rawText = await res.text().catch(() => "");
+  const contentType = (res.headers.get("content-type") ?? "").toLowerCase();
+
+  // JSON 가능성이 있으면 파싱 시도 (content-type이 json이거나, 본문이 { 로 시작하는 경우)
+  let parsed: unknown = null;
+  const looksJson =
+    contentType.includes("application/json") || rawText.trim().startsWith("{");
+
+  if (looksJson && rawText.trim()) {
+    try {
+      parsed = JSON.parse(rawText) as unknown;
+    } catch {
+      parsed = null;
+    }
+  }
+
+  // JSON 응답 케이스: id/messageId 모두 허용 + content 추출
+  if (isRecord(parsed)) {
+    const returnedSessionId =
+      nonEmptyString(parsed["sessionId"]) ??
+      nonEmptyString(parsed["session_id"]) ??
+      null;
+
+    const returnedMessageId =
+      nonEmptyString(parsed["messageId"]) ??
+      nonEmptyString(parsed["message_id"]) ??
+      nonEmptyString(parsed["id"]) ?? // <-- 네 백엔드 응답은 여기로 들어옴
+      null;
+
+    const extractedContent = extractTextLikeContent(parsed) ?? "";
+
+    const createdAt =
+      nonEmptyString(parsed["createdAt"]) ??
+      nonEmptyString(parsed["created_at"]) ??
+      new Date().toISOString();
+
     return {
-      sessionId,
-      messageId: String(data["messageId"]),
+      sessionId: returnedSessionId ?? sessionId,
+      messageId: returnedMessageId ?? messageId,
       role: "assistant",
-      content: String(data["content"]),
-      createdAt: nonEmptyString(data["createdAt"]) ?? new Date().toISOString(),
+      content: extractedContent.trim() ? extractedContent : "응답이 비어 있습니다.",
+      createdAt,
     };
   }
 
-  const text = await res.text().catch(() => "");
+  // 텍스트 응답 케이스(JSON 파싱 실패 or text/plain)
   return {
     sessionId,
     messageId,
     role: "assistant",
-    content: text || "응답이 비어 있습니다.",
+    content: rawText.trim() ? rawText : "응답이 비어 있습니다.",
     createdAt: new Date().toISOString(),
   };
 }
@@ -1067,8 +1091,7 @@ async function fetchFaqJson(
   if (!res.ok) {
     const bodyText = await res.text().catch(() => "");
     throw new Error(
-      `GET ${url} failed: ${res.status} ${res.statusText}${
-        bodyText ? ` - ${bodyText}` : ""
+      `GET ${url} failed: ${res.status} ${res.statusText}${bodyText ? ` - ${bodyText}` : ""
       }`
     );
   }
@@ -1275,8 +1298,7 @@ async function streamMessageByIdSSE(
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     throw new Error(
-      `SSE GET ${url} failed: ${res.status} ${res.statusText}${
-        body ? ` - ${body}` : ""
+      `SSE GET ${url} failed: ${res.status} ${res.statusText}${body ? ` - ${body}` : ""
       }`
     );
   }

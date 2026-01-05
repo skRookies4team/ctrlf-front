@@ -1,9 +1,11 @@
 // src/components/chatbot/reviewerApiHttp.ts
 import type { ReviewWorkItem } from "./reviewerDeskTypes";
 import type {
+  AcquireLockResponse,
   ConflictPayload,
   DecisionRequest,
   DecisionResponse,
+  ReleaseLockResponse,
   ReviewListParams,
   ReviewListResponse,
   ReviewStatsResponse,
@@ -241,9 +243,10 @@ export const reviewerApiHttp = {
    * - 1차 승인: SCRIPT_REVIEW_REQUESTED → SCRIPT_APPROVED
    * - 2차 승인: FINAL_REVIEW_REQUESTED → PUBLISHED
    */
-  async approve(id: string, req: DecisionRequest): Promise<DecisionResponse> {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async approve(id: string, _req: DecisionRequest): Promise<DecisionResponse> {
     // 백엔드 API는 body가 없음 (PUT 메서드만 사용)
-    const response = await http<{
+    await http<{
       videoId: string;
       previousStatus: string;
       currentStatus: string;
@@ -267,7 +270,7 @@ export const reviewerApiHttp = {
    */
   async reject(id: string, req: DecisionRequest): Promise<DecisionResponse> {
     // 백엔드 API는 reason만 body로 전송
-    const response = await http<{
+    await http<{
       videoId: string;
       previousStatus: string;
       currentStatus: string;
@@ -287,7 +290,8 @@ export const reviewerApiHttp = {
    * Lock 관련 메서드 (백엔드에서 지원하지 않으므로 빈 구현)
    * 호환성을 위해 유지
    */
-  async acquireLock(id: string): Promise<import("./reviewerApiTypes").AcquireLockResponse> {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async acquireLock(_id: string): Promise<AcquireLockResponse> {
     // 백엔드 API에는 lock 기능이 없으므로 빈 구현
     return {
       lockToken: "",
@@ -297,7 +301,8 @@ export const reviewerApiHttp = {
     };
   },
 
-  async releaseLock(id: string, lockToken: string): Promise<import("./reviewerApiTypes").ReleaseLockResponse> {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async releaseLock(_id: string, _lockToken: string): Promise<ReleaseLockResponse> {
     // 백엔드 API에는 lock 기능이 없으므로 빈 구현
     return { released: true };
   },

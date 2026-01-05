@@ -120,10 +120,25 @@ function toEducationList(raw: unknown): CreatorEducationWithVideosItem[] {
       const title = readOptionalString(it, "title") ?? "";
       if (!id) return null;
 
+      // departmentScope는 JSON string으로 올 수 있음 (스펙: docs/education_api_spec.md 2.1, 2.2)
       const scopeRaw = (it as Record<string, unknown>)["departmentScope"];
-      const deptScope = Array.isArray(scopeRaw)
-        ? scopeRaw.filter((x): x is string => typeof x === "string" && x.trim().length > 0)
-        : undefined;
+      let deptScope: string[] | undefined;
+      
+      if (typeof scopeRaw === "string" && scopeRaw.trim()) {
+        // JSON string인 경우 파싱
+        try {
+          const parsed = JSON.parse(scopeRaw);
+          deptScope = Array.isArray(parsed) 
+            ? parsed.filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+            : undefined;
+        } catch {
+          // 파싱 실패 시 undefined
+          deptScope = undefined;
+        }
+      } else if (Array.isArray(scopeRaw)) {
+        // 이미 배열인 경우 (호환성)
+        deptScope = scopeRaw.filter((x): x is string => typeof x === "string" && x.trim().length > 0);
+      }
 
       const videosRaw = Array.isArray((it as Record<string, unknown>)["videos"])
         ? ((it as Record<string, unknown>)["videos"] as unknown[])
