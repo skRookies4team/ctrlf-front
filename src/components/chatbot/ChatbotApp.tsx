@@ -1259,7 +1259,8 @@ const ChatbotApp: React.FC<ChatbotAppProps> = ({
           return;
         }
 
-        const targetDomain: ChatDomain = fromChatServiceDomain(item.domain, "general");
+        // FAQ 모드 유지: domain을 "faq"로 설정하여 입력창 숨김 및 카테고리 칩 계속 표시
+        const targetDomain: ChatDomain = "faq";
 
         setSessions((prev) =>
           prev.map((session) => {
