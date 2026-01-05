@@ -27,6 +27,7 @@ import {
   type FaqHomeItem,
   type FaqItem,
   type ChatSendResult,
+  type PlayEducationVideoParams,
   fromChatServiceDomain,
   normalizeServiceDomain,
 } from "../../types/chat";
@@ -38,6 +39,9 @@ import {
   type PanelSize,
 } from "../../utils/chat";
 import { can, type UserRole } from "../../auth/roles";
+
+// Re-export for backwards compatibility
+export type { PlayEducationVideoParams } from "../../types/chat";
 
 interface ChatbotAppProps {
   onClose: () => void;
@@ -51,6 +55,8 @@ interface ChatbotAppProps {
   onRequestFocus?: () => void;
   onOpenReviewerPanel?: () => void;
   onOpenCreatorPanel?: () => void;
+  /** AI 응답에서 영상 재생 액션이 감지되었을 때 호출 */
+  onPlayEducationVideo?: (params: PlayEducationVideoParams) => void;
 }
 
 type Size = PanelSize;
@@ -549,6 +555,7 @@ const ChatbotApp: React.FC<ChatbotAppProps> = ({
   onRequestFocus,
   onOpenReviewerPanel,
   onOpenCreatorPanel,
+  onPlayEducationVideo,
 }) => {
   // 패널 크기 + 위치
   const [size, setSize] = useState<Size>(INITIAL_SIZE);
@@ -1397,6 +1404,19 @@ const ChatbotApp: React.FC<ChatbotAppProps> = ({
                   };
                 })
               );
+
+              // AI 응답에 영상 재생 액션이 있으면 처리
+              if (
+                f.action?.type === "PLAY_VIDEO" &&
+                f.action.educationId &&
+                f.action.videoId
+              ) {
+                onPlayEducationVideo?.({
+                  educationId: f.action.educationId,
+                  videoId: f.action.videoId,
+                  resumePositionSeconds: f.action.resumePositionSeconds,
+                });
+              }
             },
           });
 
@@ -1427,6 +1447,19 @@ const ChatbotApp: React.FC<ChatbotAppProps> = ({
               };
             })
           );
+
+          // AI 응답에 영상 재생 액션이 있으면 처리
+          if (
+            reply.action?.type === "PLAY_VIDEO" &&
+            reply.action.educationId &&
+            reply.action.videoId
+          ) {
+            onPlayEducationVideo?.({
+              educationId: reply.action.educationId,
+              videoId: reply.action.videoId,
+              resumePositionSeconds: reply.action.resumePositionSeconds,
+            });
+          }
         }
       } catch (error) {
         console.error("sendChatToAI error:", error);
