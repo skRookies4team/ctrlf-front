@@ -534,6 +534,65 @@ type UpstreamChatFeedbackRequest = {
   comment?: string;
 };
 
+/**
+ * 세션 목록 조회 (GET /api/chat/sessions)
+ * - 스펙: GET /api/chat/sessions
+ * - Response: 배열 형태의 세션 목록
+ */
+export async function getChatSessions(): Promise<ChatSessionResponse[]> {
+  const token = await ensureFreshToken();
+  if (!token) {
+    throw new Error("Not authenticated: Keycloak token is missing.");
+  }
+
+  const res = await fetchWithTimeout(
+    CHAT_SESSIONS_ENDPOINT,
+    {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+    },
+    DEFAULT_TIMEOUT_MS
+  );
+
+  if (!res.ok) {
+    const bodyText = await res.text().catch(() => "");
+    throw new Error(
+      `Get sessions failed: ${res.status} ${res.statusText}${
+        bodyText ? ` - ${bodyText}` : ""
+      }`
+    );
+  }
+
+  const data: unknown = await res.json().catch(() => null);
+  
+  // 배열 형태 응답 처리
+  if (Array.isArray(data)) {
+    return data.filter(
+      (item): item is ChatSessionResponse =>
+        isRecord(item) && nonEmptyString(item["id"]) !== null
+    ) as ChatSessionResponse[];
+  }
+
+  // 객체 형태 응답에서 배열 추출 (방어적 처리)
+  if (isRecord(data)) {
+    const candidates = ["items", "data", "sessions", "content", "result"];
+    for (const key of candidates) {
+      const value = data[key];
+      if (Array.isArray(value)) {
+        return value.filter(
+          (item): item is ChatSessionResponse =>
+            isRecord(item) && nonEmptyString(item["id"]) !== null
+        ) as ChatSessionResponse[];
+      }
+    }
+  }
+
+  return [];
+}
+
 async function createChatSession(
   payload: ChatSessionCreateRequest,
   token: string

@@ -99,12 +99,37 @@ const ADMIN_EDUS_WITH_VIDEOS_ENDPOINT = envStr(
   "VITE_ADMIN_EDUS_WITH_VIDEOS_ENDPOINT",
   `${EDU_BASE}/admin/edus/with-videos`
 );
+
+// “교육 목록(with-videos)”은 admin 경로/비-admin 경로가 섞여 있는 팀이 많아서
+// 1) 새 env(VITE_EDU_WITH_VIDEOS_ENDPOINT) 우선
+// 2) 없으면 기존 env(VITE_ADMIN_EDUS_WITH_VIDEOS_ENDPOINT) 사용
+// 3) 그래도 실패하면 fallback 후보들을 순차 시도
+const EDU_WITH_VIDEOS_ENDPOINT = envStr("VITE_EDU_WITH_VIDEOS_ENDPOINT", ADMIN_EDUS_WITH_VIDEOS_ENDPOINT);
+const EDU_WITH_VIDEOS_FALLBACK_ENDPOINTS: string[] = [
+  `${EDU_BASE}/admin/educations/with-videos`,
+  `${EDU_BASE}/admin/edus/with-videos`,
+  `${EDU_BASE}/educations/with-videos`,
+  `${EDU_BASE}/edus/with-videos`,
+];
+
 const ADMIN_EDU_DETAIL_ENDPOINT = envStr(
   "VITE_ADMIN_EDU_DETAIL_ENDPOINT",
   `${EDU_BASE}/admin/edu/{educationId}`
 );
 
 const ADMIN_VIDEOS_ENDPOINT = envStr("VITE_ADMIN_VIDEOS_ENDPOINT", `${EDU_BASE}/admin/videos`);
+
+// “드래프트 생성”도 백엔드마다 /admin/videos /videos 등으로 갈리는 경우가 있어
+// 1) 새 env(VITE_CREATOR_DRAFT_CREATE_ENDPOINT) 우선
+// 2) 없으면 기존 env(VITE_ADMIN_VIDEOS_ENDPOINT) 사용
+// 3) 그래도 실패하면 fallback 후보들을 순차 시도
+const CREATOR_DRAFT_CREATE_ENDPOINT = envStr("VITE_CREATOR_DRAFT_CREATE_ENDPOINT", ADMIN_VIDEOS_ENDPOINT);
+const CREATOR_DRAFT_CREATE_FALLBACK_ENDPOINTS: string[] = [
+  `${EDU_BASE}/videos`,
+  `${EDU_BASE}/admin/video`,
+  `${EDU_BASE}/video`,
+];
+
 const ADMIN_VIDEO_DETAIL_ENDPOINT = envStr(
   "VITE_ADMIN_VIDEO_DETAIL_ENDPOINT",
   `${ADMIN_VIDEOS_ENDPOINT}/{videoId}`
@@ -593,6 +618,16 @@ function normalizeDepartmentScopeToDeptIds(
 ): string[] {
   if (!scopeNames || scopeNames.length === 0) return [];
 
+  const normalizedNames = scopeNames
+    .map((x) => String(x ?? "").trim())
+    .filter((x) => x.length > 0);
+
+  // "전체 부서" 포함 → 전사 전체 의미 → deptIds 비움
+  const hasAll = normalizedNames.some(
+    (n) => n === "전체 부서" || n === "전사" || n.toLowerCase() === "all"
+  );
+  if (hasAll) return [];
+
   const byName = new Map<string, string>();
   const knownIds = new Set<string>();
 
@@ -608,21 +643,49 @@ function normalizeDepartmentScopeToDeptIds(
   }
 
   const out: string[] = [];
-  for (const raw of scopeNames) {
+  for (const raw of normalizedNames) {
     const s = String(raw ?? "").trim();
     if (!s) continue;
 
-    // 이미 id로 내려오는 케이스
     if (knownIds.has(s)) {
       out.push(s);
       continue;
     }
 
     const mapped = byName.get(s.toLowerCase());
-    out.push(mapped ?? s); // 못 찾으면 이름 자체를 id로 사용
+    out.push(mapped ?? s);
   }
 
   return uniq(out);
+}
+
+function lockTargetDeptIdsByEducation(
+  desiredTargetDeptIds: string[] | undefined,
+  boundEdu: { targetDeptIds?: string[]; departmentScope?: string[] } | null,
+  categoryId: string,
+  knownDepts: ReadonlyArray<DepartmentOption>
+): string[] {
+  // 필수(MANDATORY)면 전사 고정
+  const cat = String(categoryId ?? "").trim().toUpperCase();
+  if (cat === "MANDATORY") return [];
+
+  if (!boundEdu) return Array.isArray(desiredTargetDeptIds) ? desiredTargetDeptIds : [];
+
+  // 1) education.targetDeptIds 우선
+  if (Array.isArray(boundEdu.targetDeptIds) && boundEdu.targetDeptIds.length > 0) {
+    return [...boundEdu.targetDeptIds];
+  }
+
+  // 2) departmentScope(부서명 배열) 매핑
+  const scopeNames = Array.isArray(boundEdu.departmentScope) ? boundEdu.departmentScope : [];
+  if (scopeNames.length > 0) {
+    const mapped = normalizeDepartmentScopeToDeptIds(scopeNames, knownDepts);
+    // scope에 '전체 부서'가 있으면 mapped는 [] (전사 전체) → 그대로 OK
+    if (mapped.length > 0) return mapped;
+    if (scopeNames.some((n) => String(n).trim() === "전체 부서")) return [];
+  }
+
+  return Array.isArray(desiredTargetDeptIds) ? desiredTargetDeptIds : [];
 }
 
 function toDepartmentScopeNamesFromIds(
@@ -1168,6 +1231,159 @@ async function safeFetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   }
 
   throw lastErr instanceof Error ? lastErr : new Error(String(lastErr ?? "요청 실패"));
+}
+
+function dedupUrls(urls: string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const u of urls) {
+    const s = String(u ?? "").trim();
+    if (!s) continue;
+    if (seen.has(s)) continue;
+    seen.add(s);
+    out.push(s);
+  }
+  return out;
+}
+
+/**
+ * ✅ 교육 목록(with-videos) 조회
+ * - /api-edu/... 경로가 팀/환경별로 달라서 후보 endpoint를 순차 시도
+ */
+async function getEducationsWithVideos(args?: { signal?: AbortSignal }): Promise<unknown> {
+  const endpoints = dedupUrls([EDU_WITH_VIDEOS_ENDPOINT, ...EDU_WITH_VIDEOS_FALLBACK_ENDPOINTS]);
+
+  let lastErr: unknown = null;
+
+  for (const url of endpoints) {
+    try {
+      return await safeFetchJson<unknown>(url, { method: "GET", signal: args?.signal });
+    } catch (e) {
+      lastErr = e;
+      const st = extractHttpStatus(e);
+
+      // “경로가 없어서” 실패하는 케이스만 다음 후보로 진행
+      if (st === 404 || st === 405) continue;
+
+      // 401/403/400/500 등은 “진짜 실패”로 보고 즉시 중단
+      throw e;
+    }
+  }
+
+  throw lastErr instanceof Error ? lastErr : new Error("교육 목록(with-videos) endpoint를 찾지 못했습니다.");
+}
+
+/**
+ * ✅ educationId 포함해서 DRAFT 생성
+ * - 1차: videos 계열 endpoint로 생성 시도
+ * - 2차: (videos가 아예 없을 때만) source-sets로 fallback 시도
+ */
+async function createDraftForEducation(args: {
+  educationId: string;
+  title?: string;
+  templateId?: string;
+  departmentScope?: string[]; // 교육의 departmentScope를 전달할 수 있도록 추가
+  signal?: AbortSignal;
+}): Promise<{ videoId: string | null; raw: unknown }> {
+  const educationId = String(args.educationId ?? "").trim();
+  if (!educationId) throw new Error("createDraftForEducation: educationId가 비었습니다.");
+
+  const title = (args.title ?? "새 교육 콘텐츠").trim();
+
+  const endpoints = dedupUrls([CREATOR_DRAFT_CREATE_ENDPOINT, ...CREATOR_DRAFT_CREATE_FALLBACK_ENDPOINTS]);
+
+  let lastErr: unknown = null;
+
+  // ✅ (A) videos endpoint로 DRAFT 생성
+  for (const url of endpoints) {
+    try {
+      const payload = compactPayload({
+        // 핵심: educationId 반드시 포함
+        educationId,
+        eduId: educationId, // 호환 alias
+        title,
+
+        // 템플릿을 받는 서버도 있고(필수), 없어도 되는 서버도 있어서 "값 있을 때만"
+        templateId: args.templateId || undefined,
+        videoTemplateId: args.templateId || undefined, // alias
+
+        // 백엔드 API 문서 기준: departmentScope는 optional이지만, 교육 정보가 있으면 전달
+        departmentScope: Array.isArray(args.departmentScope) && args.departmentScope.length > 0
+          ? args.departmentScope
+          : undefined,
+
+        // 상태를 받는 서버가 있으면 도움이 되고, 거절하면 compactPayload로 빠짐
+        status: "DRAFT",
+      });
+
+      const created = await safeFetchJson<unknown>(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+        signal: args.signal,
+      });
+
+      const videoId =
+        (created && typeof created === "object" && (readStr(created, "videoId") ?? readStr(created, "id"))) || null;
+
+      return { videoId: typeof videoId === "string" ? videoId.trim() : null, raw: created };
+    } catch (e) {
+      lastErr = e;
+      const st = extractHttpStatus(e);
+
+      // “경로가 없어서” 실패하는 케이스만 다음 후보로 진행
+      if (st === 404 || st === 405) continue;
+
+      // 400/401/403/500 등은 스펙/권한/검증 문제 → 즉시 중단(원인 숨기지 않음)
+      throw e;
+    }
+  }
+
+  // ✅ (B) videos endpoint가 “아예 없다”면 source-sets로 DRAFT 생성 fallback
+  // - 일부 백엔드는 source-sets 생성 시 video를 같이 만들기도 해서 여기로 구제
+  try {
+    const created = await safeFetchJson<unknown>(VIDEO_SOURCESET_CREATE_ENDPOINT, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(
+        compactPayload({
+          // 핵심: educationId 반드시 포함
+          educationId,
+          eduId: educationId, // alias
+          title,
+
+          // 서버가 optional로 받을 수도 있어 빈 배열로라도 넣어 둠(거절하면 400으로 드러남)
+          documentIds: [],
+
+          // 서버가 요구하는 케이스가 있어 기본값 제공(거절하면 400으로 드러남)
+          domain: "JOB_TRAINING",
+        })
+      ),
+      signal: args.signal,
+    });
+
+    const videoId =
+      (created && typeof created === "object" && (readStr(created, "videoId") ?? readStr(created, "id"))) || null;
+
+    return { videoId: typeof videoId === "string" ? videoId.trim() : null, raw: created };
+  } catch (e2) {
+    // 마지막 실패는 마지막 에러를 던져 디버깅 가능하게
+    throw (lastErr ?? e2) as unknown;
+  }
+}
+
+function pickMostRecentVideoIdForEducation(educationId: string, items: CreatorWorkItem[]): string | null {
+  const target = items.filter((it) => String(it.educationId ?? "").trim() === educationId);
+  if (target.length === 0) return null;
+
+  let best = target[0];
+  for (let i = 1; i < target.length; i++) {
+    const it = target[i];
+    const bu = best.updatedAt ?? 0;
+    const iu = it.updatedAt ?? 0;
+    if (iu > bu) best = it;
+  }
+  return best.id ?? null;
 }
 
 /* -----------------------------
@@ -1890,10 +2106,7 @@ export function useCreatorStudioController(options?: UseCreatorStudioControllerO
     listAbortRef.current = ac;
 
     try {
-      const raw = await safeFetchJson<unknown>(ADMIN_EDUS_WITH_VIDEOS_ENDPOINT, {
-        method: "GET",
-        signal: ac.signal,
-      });
+      const raw = await getEducationsWithVideos({ signal: ac.signal });
 
       const { educations: edus, videos } = normalizeEduWithVideosResponse(raw, creatorName);
       const normalized = normalizeCreatorSourceFiles(videos);
@@ -1988,7 +2201,6 @@ export function useCreatorStudioController(options?: UseCreatorStudioControllerO
   };
 
   const createDraft = async () => {
-    const now = Date.now();
 
     const eduId =
       selectedEducationId ??
@@ -2013,37 +2225,32 @@ export function useCreatorStudioController(options?: UseCreatorStudioControllerO
 
     const maybeTemplateId = ensureTemplateId(templates[0]?.id ?? "");
 
-    const payload: Record<string, unknown> = compactPayload({
-      eduId: educationId,
-      educationId,
-      title: "새 교육 콘텐츠",
-      // 템플릿 목록이 아직 비었거나(로드 전) 서버 기본 템플릿을 쓰는 경우를 위해: 빈값은 전송하지 않음
-      templateId: maybeTemplateId || undefined,
-      videoTemplateId: maybeTemplateId || undefined, // alias
-      createdAt: now,
-      updatedAt: now,
-    });
-
     try {
-      const created = await safeFetchJson<unknown>(ADMIN_VIDEOS_ENDPOINT, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(payload),
+      const { videoId: createdVideoId } = await createDraftForEducation({
+        educationId,
+        title: "새 교육 콘텐츠",
+        templateId: maybeTemplateId || undefined,
       });
 
-      const newVideoId =
-        (created && typeof created === "object" && (readStr(created, "videoId") ?? readStr(created, "id"))) || null;
-
       showToast("success", "새 초안이 생성되었습니다.");
-      await refreshItems({ silent: true });
 
-      if (typeof newVideoId === "string" && newVideoId.trim().length > 0) {
-        setRawSelectedId(newVideoId.trim());
+      const loaded = await refreshItems({ silent: true });
+
+      // 서버가 videoId를 바로 안 주는 케이스(또는 source-sets fallback) 대비:
+      // educationId 기준으로 “가장 최근” 항목을 찾아 선택
+      const nextId =
+        (createdVideoId && createdVideoId.trim().length > 0 ? createdVideoId.trim() : null) ??
+        (loaded ? pickMostRecentVideoIdForEducation(educationId, loaded.items) : null);
+
+      if (nextId) {
+        setRawSelectedId(nextId);
         setTab("draft");
       }
     } catch (e) {
+      const status = extractHttpStatus(e);
       const msg = e instanceof Error ? e.message : "초안 생성 실패";
-      showToast("error", `초안 생성에 실패했습니다. (${msg})`, 3600);
+      const tail = status ? ` (HTTP ${status})` : "";
+      showToast("error", `초안 생성에 실패했습니다.${tail} ${msg}`, 3600);
     }
   };
 
@@ -2070,13 +2277,23 @@ export function useCreatorStudioController(options?: UseCreatorStudioControllerO
 
     const nextTitle = patch.title ?? selectedItem.title;
 
-    const desiredCategoryId = patch.categoryId ?? selectedItem.categoryId;
+    const boundEducation = selectedItem.educationId
+      ? educations.find((e) => e.educationId === selectedItem.educationId) ?? null
+      : null;
+
+    const categoryFromEducation = boundEducation?.categoryId?.trim() || null;
+    const jobTrainingFromEducation = boundEducation?.jobTrainingId?.trim() || null;
+
+    const desiredCategoryId = (categoryFromEducation ?? (patch.categoryId ?? selectedItem.categoryId)).trim();
     const desiredMandatoryCategory = isMandatoryByCategory(desiredCategoryId);
 
-    if (isDeptCreator && desiredMandatoryCategory) {
-      showToast("info", "부서 제작자는 4대 의무교육(전사 필수) 카테고리를 선택할 수 없습니다.");
-      return;
-    }
+    const desiredJobTrainingId = jobTrainingFromEducation ?? (patch.jobTrainingId ?? selectedItem.jobTrainingId ?? null);
+
+    const desiredTargetDeptIdsRaw = patch.targetDeptIds ?? selectedItem.targetDeptIds;
+    const desiredTargetDeptIds =
+      boundEducation != null
+        ? lockTargetDeptIdsByEducation(desiredTargetDeptIdsRaw, boundEducation, desiredCategoryId, departments)
+        : desiredTargetDeptIdsRaw;
 
     const nextCategoryId = desiredCategoryId;
     const nextCategoryLabel = categoryLabel(nextCategoryId);
@@ -2084,23 +2301,24 @@ export function useCreatorStudioController(options?: UseCreatorStudioControllerO
     const nextTemplateId = ensureTemplateId(patch.templateId ?? selectedItem.templateId ?? "");
     const nextJobTrainingId = normalizeJobTrainingIdByCategory(
       nextCategoryId,
-      patch.jobTrainingId ?? selectedItem.jobTrainingId ?? null,
+      desiredJobTrainingId,
       ensureJobTrainingId
     );
 
-    // 필수 여부는 UI/입력에서 제거됨 → 카테고리로만 결정
     const nextIsMandatory = isMandatoryByCategory(nextCategoryId);
+
+    const nextTargetDeptIds = normalizeTargetDeptIds(desiredTargetDeptIds, nextCategoryId);
+
+    if (isDeptCreator && desiredMandatoryCategory) {
+      showToast("info", "부서 제작자는 4대 의무교육(전사 필수) 카테고리를 선택할 수 없습니다.");
+      return;
+    }
 
     // (정책 유지) DEPT_CREATOR는 4대 의무교육 카테고리 자체를 선택 불가
     if (isDeptCreator && nextIsMandatory) {
       showToast("info", "부서 제작자는 4대 의무교육(전사 필수) 카테고리를 선택할 수 없습니다.");
       return;
     }
-
-    const nextTargetDeptIds = normalizeTargetDeptIds(
-      patch.targetDeptIds ?? selectedItem.targetDeptIds,
-      nextCategoryId
-    );
 
     const normalizedPatch: Partial<CreatorWorkItem> = {
       title: nextTitle,
@@ -2666,14 +2884,25 @@ export function useCreatorStudioController(options?: UseCreatorStudioControllerO
       return;
     }
 
-    if (!selectedItem.assets.sourceFileName) {
+    // sourceFiles 배열 또는 레거시 sourceFileName 필드 확인
+    const sourceFiles = Array.isArray(selectedItem.assets.sourceFiles) ? selectedItem.assets.sourceFiles : [];
+    const hasSourceFile = sourceFiles.length > 0 || (selectedItem.assets.sourceFileName ?? "").trim().length > 0;
+    
+    if (!hasSourceFile) {
       showToast("error", "먼저 교육 자료 파일을 업로드해 주세요.", 3000);
       return;
     }
 
     const docIds = getDocumentIdsFromItem(selectedItem);
     if (docIds.length === 0) {
-      showToast("error", "문서 등록(documentId)이 완료되지 않았습니다. 업로드가 끝난 뒤 다시 시도해 주세요.", 3500);
+      // sourceFiles가 있지만 documentId가 없는 경우는 업로드가 아직 진행 중일 수 있음
+      // sourceFiles에 SRC_TMP로 시작하는 임시 ID가 있는지 확인
+      const hasTempFiles = sourceFiles.some((f) => f.id && String(f.id).startsWith("SRC_TMP"));
+      if (hasTempFiles) {
+        showToast("error", "문서 업로드가 아직 완료되지 않았습니다. 업로드가 끝난 뒤 다시 시도해 주세요.", 3500);
+      } else {
+        showToast("error", "문서 등록(documentId)이 완료되지 않았습니다. 업로드가 끝난 뒤 다시 시도해 주세요.", 3500);
+      }
       return;
     }
 
@@ -2704,7 +2933,8 @@ export function useCreatorStudioController(options?: UseCreatorStudioControllerO
           title: (selectedItem.title ?? "").trim() || "교육 자료",
           // domain 값은 백엔드 enum에 맞춰야 함
           // - 직무면 JOB_TRAINING, 의무면 FOUR_MANDATORY로 가정(스웨거 예시 기준)
-          domain: selectedItem.jobTrainingId ? "JOB_TRAINING" : "FOUR_MANDATORY",
+          // categoryId를 기준으로 판단 (jobTrainingId는 직무 카테고리에서만 사용)
+          domain: isJobCategory(selectedItem.categoryId) ? "JOB_TRAINING" : "FOUR_MANDATORY",
 
           // 과거 스펙/백엔드 호환용 alias
           eduId: educationId,
@@ -2714,11 +2944,24 @@ export function useCreatorStudioController(options?: UseCreatorStudioControllerO
       showToast("info", "소스셋 생성 요청이 완료되었습니다. 스크립트 생성 상태를 확인합니다…", 2000);
       pollVideoStatus(selectedItem.id);
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "소스셋 생성에 실패했습니다.";
-      showToast("error", msg, 3500);
+      const status = extractHttpStatus(e);
+      let msg = e instanceof Error ? e.message : "소스셋 생성에 실패했습니다.";
+      
+      // 403 Forbidden 오류의 경우 더 명확한 메시지 제공
+      if (status === 403) {
+        msg = "스크립트 생성 권한이 없습니다. (403) 백엔드 내부 토큰 설정을 확인해주세요.";
+      } else if (status === 401) {
+        msg = "인증이 필요합니다. (401) 로그인 상태를 확인해주세요.";
+      } else if (status) {
+        msg = `${msg} (HTTP ${status})`;
+      }
+      
+      showToast("error", msg, 5000);
       updateSelected({
         status: "FAILED",
-        failedReason: "소스셋 생성 실패",
+        failedReason: status === 403 
+          ? "스크립트 생성 권한 오류 (백엔드 내부 토큰 설정 필요)"
+          : "소스셋 생성 실패",
         pipeline: {
           ...selectedItem.pipeline,
           state: "FAILED",
@@ -3129,6 +3372,85 @@ export function useCreatorStudioController(options?: UseCreatorStudioControllerO
     educations,
     selectedEducationId,
     setSelectedEducationId,
+
+    // patch2: 교육 목록(영상 포함) 로더
+    getEducationsWithVideos: (args?: { signal?: AbortSignal }) =>
+      getEducationsWithVideos({ signal: args?.signal }),
+
+    // patch2: 선택한 교육ID로 초안 생성
+    createDraftForEducation: async (
+      educationId: string | { educationId: string; title?: string; departmentScope?: string[] },
+      opts?: { title?: string; templateId?: string; departmentScope?: string[] }
+    ) => {
+      // 객체 형태와 개별 파라미터 형태 모두 지원
+      let eid: string;
+      let title: string | undefined;
+      let departmentScope: string[] | undefined;
+      let templateId: string | undefined;
+
+      if (typeof educationId === "object" && educationId !== null) {
+        eid = String(educationId.educationId ?? "").trim();
+        title = educationId.title;
+        departmentScope = educationId.departmentScope;
+        templateId = opts?.templateId;
+      } else {
+        eid = String(educationId ?? "").trim();
+        title = opts?.title;
+        departmentScope = opts?.departmentScope;
+        templateId = opts?.templateId;
+      }
+
+      if (!eid) {
+        showToast("error", "교육을 선택해 주세요.");
+        return null;
+      }
+
+      const edu = educations.find((e) => e.educationId === eid);
+      const desiredTitle =
+        (title ?? opts?.title ?? "").trim() || (edu ? `${edu.title} - 새 콘텐츠` : "새 교육 콘텐츠");
+      const desiredTemplateId =
+        (templateId ?? opts?.templateId ?? "").trim() || edu?.templateId || DEFAULT_TEMPLATE_ID || "";
+      const desiredDepartmentScope = departmentScope ?? opts?.departmentScope ?? edu?.departmentScope;
+
+      try {
+        // 선택 교육 컨텍스트 고정
+        setSelectedEducationId(eid);
+
+        const { videoId: createdVideoId } = await createDraftForEducation({
+          educationId: eid,
+          title: desiredTitle,
+          templateId: desiredTemplateId || undefined,
+          departmentScope: Array.isArray(desiredDepartmentScope) && desiredDepartmentScope.length > 0
+            ? desiredDepartmentScope
+            : undefined,
+        });
+
+        const loaded = await refreshItems({ silent: true });
+
+        // 서버가 videoId를 바로 안 주는 케이스 대비: educationId 기준으로 “가장 최근” 항목을 찾아 선택
+        const vid =
+          (createdVideoId && createdVideoId.trim().length > 0 ? createdVideoId.trim() : null) ??
+          (loaded ? pickMostRecentVideoIdForEducation(eid, loaded.items) : null);
+
+        if (!vid) {
+          showToast("error", "초안 생성에 실패했습니다.");
+          return null;
+        }
+
+        // 선택 + 탭 이동(초안은 항상 draft 탭으로)
+        selectItem(vid);
+        setTab("draft");
+
+        showToast("success", "새 콘텐츠 초안이 생성되었습니다.");
+        return vid;
+      } catch (e) {
+        const status = extractHttpStatus(e);
+        const msg = e instanceof Error ? e.message : "초안 생성 실패";
+        const tail = status ? ` (HTTP ${status})` : "";
+        showToast("error", `초안 생성 중 오류가 발생했습니다.${tail} ${msg}`, 3600);
+        return null;
+      }
+    },
 
     // state
     tab,

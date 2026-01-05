@@ -353,3 +353,27 @@ export function deriveCreatorStatus(input: {
   // SCRIPT_READY / SCRIPT_APPROVED / READY / DRAFT 등은 "작업 가능"으로 DRAFT 취급
   return "DRAFT";
 }
+
+// 패치2: Creator Studio에서 교육(education) 선택 모달을 위한 'with-videos' 응답 타입
+export type CreatorEducationVideoSummary = Readonly<{
+  id: string;
+  title: string;
+  status?: string | null;
+  updatedAt?: string | null;
+}>;
+
+export type CreatorEducationWithVideosItem = Readonly<{
+  id: string;
+  title: string;
+  startAt?: string | null;
+  endAt?: string | null;
+  departmentScope?: string[];
+  required?: boolean | null;
+  eduType?: string | null;
+  passScore?: number | null;
+  passRatio?: number | null;
+  categoryId?: string | null;
+  jobTrainingId?: string | null;
+  templateId?: string | null;
+  videos: CreatorEducationVideoSummary[];
+}>;

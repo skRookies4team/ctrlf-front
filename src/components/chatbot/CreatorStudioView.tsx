@@ -8,6 +8,7 @@ import React, {
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 import {
   computePanelPosition,
   type Anchor,
@@ -22,6 +23,7 @@ import type {
   CreatorTabId,
   CreatorWorkItem,
   ReviewStage,
+  CreatorEducationWithVideosItem,
 } from "./creatorStudioTypes";
 import CreatorTrainingSelect from "./CreatorTrainingSelect";
 import ProjectFilesModal, { type ProjectFileItem } from "./ProjectFilesModal";
@@ -95,6 +97,101 @@ function cx(...tokens: Array<string | false | null | undefined>) {
  */
 function statusKey(v: unknown): string {
   return String(v ?? "").trim();
+}
+
+function toEducationList(raw: unknown): CreatorEducationWithVideosItem[] {
+  if (!Array.isArray(raw)) return [];
+
+  const toBool = (v: unknown): boolean | undefined => {
+    if (typeof v === "boolean") return v;
+    if (typeof v === "number") return v !== 0;
+    if (typeof v === "string") {
+      const t = v.trim().toLowerCase();
+      if (t === "true" || t === "1" || t === "y" || t === "yes") return true;
+      if (t === "false" || t === "0" || t === "n" || t === "no") return false;
+    }
+    return undefined;
+  };
+
+  return raw
+    .map((it) => {
+      if (!it || typeof it !== "object") return null;
+      const id = readOptionalString(it, "id") ?? readOptionalString(it, "educationId");
+      const title = readOptionalString(it, "title") ?? "";
+      if (!id) return null;
+
+      const scopeRaw = (it as Record<string, unknown>)["departmentScope"];
+      const deptScope = Array.isArray(scopeRaw)
+        ? scopeRaw.filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+        : undefined;
+
+      const videosRaw = Array.isArray((it as Record<string, unknown>)["videos"])
+        ? ((it as Record<string, unknown>)["videos"] as unknown[])
+        : Array.isArray((it as Record<string, unknown>)["videoList"])
+          ? ((it as Record<string, unknown>)["videoList"] as unknown[])
+          : [];
+
+      const videos = (Array.isArray(videosRaw) ? videosRaw : [])
+        .map((v) => {
+          if (!v || typeof v !== "object") return null;
+          const vid = readOptionalString(v, "id") ?? readOptionalString(v, "videoId");
+          if (!vid) return null;
+          return {
+            id: vid,
+            title: readOptionalString(v, "title") ?? "",
+            status: readOptionalString(v, "status") ?? null,
+            updatedAt: readOptionalString(v, "updatedAt") ?? null,
+          };
+        })
+        .filter(
+          (v): v is { id: string; title: string; status: string | null; updatedAt: string | null } =>
+            Boolean(v)
+        );
+
+      const requiredRaw =
+        (it as Record<string, unknown>)["required"] ??
+        (it as Record<string, unknown>)["isRequired"] ??
+        (it as Record<string, unknown>)["mandatory"] ??
+        (it as Record<string, unknown>)["isMandatory"];
+
+      return {
+        id,
+        title,
+        startAt: readOptionalString(it, "startAt") ?? "",
+        endAt: readOptionalString(it, "endAt") ?? "",
+        departmentScope: deptScope,
+        required: toBool(requiredRaw),
+        eduType: readOptionalString(it, "eduType") ?? readOptionalString(it, "type") ?? undefined,
+        passScore: readOptionalNumber(it, "passScore") ?? undefined,
+        passRatio: readOptionalNumber(it, "passRatio") ?? undefined,
+        categoryId: readOptionalString(it, "categoryId") ?? readOptionalString(it, "categoryCode") ?? undefined,
+        jobTrainingId: readOptionalString(it, "jobTrainingId") ?? undefined,
+        templateId: readOptionalString(it, "templateId") ?? undefined,
+        videos,
+      } as CreatorEducationWithVideosItem;
+    })
+    .filter((v): v is CreatorEducationWithVideosItem => Boolean(v));
+}
+
+function formatIsoRange(startAt?: string | null, endAt?: string | null): string {
+  const toK = (iso?: string) => {
+    if (!iso) return "";
+    const t = Date.parse(iso);
+    if (!Number.isFinite(t)) return iso;
+    const d = new Date(t);
+    const yy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    return `${yy}-${mm}-${dd}`;
+  };
+  const s0 = toK(startAt ?? "");
+  const e0 = toK(endAt ?? "");
+  if (!s0 && !e0) return "";
+
+  const s = s0 ? s0.split("T")[0].replace(/-/g, ".") : "";
+  const e = e0 ? e0.split("T")[0].replace(/-/g, ".") : "";
+  if (s && e) return `${s} ~ ${e}`;
+  return s || e;
 }
 
 /**
@@ -645,7 +742,7 @@ function getEmptyCopy(tab: CreatorTabId, _stage: CreatorStageFilter, query: stri
   if (tab === "draft") {
     return {
       title: "초안이 없습니다",
-      desc: "새 교육 만들기를 눌러 제작을 시작할 수 있습니다.",
+      desc: "‘교육 선택 후 콘텐츠 만들기’를 눌러 제작을 시작할 수 있습니다.",
     };
   }
 
@@ -1123,6 +1220,48 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
     [updateSelectedMeta]
   );
 
+  // 제목 입력 debounce를 위한 로컬 state 및 타이머
+  const [localTitle, setLocalTitle] = useState<string>("");
+  const titleDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // selectedItem의 title이 변경될 때 로컬 state 동기화
+  useEffect(() => {
+    if (selectedItem) {
+      setLocalTitle(selectedItem.title ?? "");
+    } else {
+      setLocalTitle("");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedItem?.id, selectedItem?.title]);
+
+  // 제목 저장 debounce 함수
+  const debouncedSaveTitle = useCallback(
+    (newTitle: string) => {
+      // 기존 타이머 취소
+      if (titleDebounceTimerRef.current) {
+        clearTimeout(titleDebounceTimerRef.current);
+      }
+
+      // 새로운 타이머 설정 (500ms 후 저장)
+      titleDebounceTimerRef.current = setTimeout(() => {
+        if (selectedItem && newTitle !== selectedItem.title) {
+          updateSelectedMeta({ title: newTitle });
+        }
+        titleDebounceTimerRef.current = null;
+      }, 500);
+    },
+    [selectedItem, updateSelectedMeta]
+  );
+
+  // 컴포넌트 언마운트 시 타이머 정리
+  useEffect(() => {
+    return () => {
+      if (titleDebounceTimerRef.current) {
+        clearTimeout(titleDebounceTimerRef.current);
+      }
+    };
+  }, []);
+
   // ==== options normalization (컨트롤러 shape 변화 대비) ====
   const normalizedDepartments = useMemo<IdName[]>(
     () => toIdNameList(departments as unknown as unknown[]),
@@ -1378,6 +1517,312 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
   const [filesModalOpen, setFilesModalOpen] = useState(false);
   const [jumpToPipelineOnClose, setJumpToPipelineOnClose] = useState(false);
   const detailScrollRef = useRef<HTMLDivElement | null>(null);
+
+  /* =========================
+   Education picker (교육 선택 → 콘텐츠 생성)
+========================= */
+
+  const [eduPickerOpen, setEduPickerOpen] = useState(false);
+  const [eduPickerQuery, setEduPickerQuery] = useState("");
+  const [eduLoading, setEduLoading] = useState(false);
+  const [eduError, setEduError] = useState<string | null>(null);
+  const [educations, setEducations] = useState<CreatorEducationWithVideosItem[]>([]);
+  const [eduSelectedId, setEduSelectedId] = useState<string>("");
+
+  const educationLoaderFn = useMemo(() => {
+    return pickFirstFunction(controller, [
+      "getEducationsWithVideos",
+      "loadEducationsWithVideos",
+      "fetchEducationsWithVideos",
+      "listEducationsWithVideos",
+      "getEducations",
+      "loadEducations",
+      "fetchEducations",
+      "listEducations",
+    ]);
+  }, [controller]);
+
+  const educationCreateDraftFn = useMemo(() => {
+    return pickFirstFunction(controller, [
+      "createDraftForEducation",
+      "createDraftWithEducation",
+      "createDraftByEducation",
+      "createDraftWithEducationId",
+    ]);
+  }, [controller]);
+
+  const educationsById = useMemo(() => {
+    const m = new Map<string, CreatorEducationWithVideosItem>();
+    for (const e of educations) m.set(e.id, e);
+    return m;
+  }, [educations]);
+
+  const boundEducationId = useMemo(() => {
+    if (!selectedItem) return "";
+    return readOptionalString(selectedItem as unknown, "educationId") ?? "";
+  }, [selectedItem]);
+
+  const boundEducation = useMemo(() => {
+    if (!boundEducationId) return null;
+    return educationsById.get(boundEducationId) ?? null;
+  }, [boundEducationId, educationsById]);
+
+  const boundDeptLocked = !!(
+    boundEducation &&
+    Array.isArray(boundEducation.departmentScope) &&
+    boundEducation.departmentScope.length > 0
+  );
+
+  const deptIdByName = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const d of normalizedDepartments) {
+      // 같은 이름이 여러 개면 최초 1개 매칭(일단 안전)
+      if (!m.has(d.name)) m.set(d.name, d.id);
+    }
+    return m;
+  }, [normalizedDepartments]);
+
+  const mapDeptNamesToIds = useCallback(
+    (names: readonly string[]) => {
+      const out: string[] = [];
+      for (const nm of names) {
+        const id = deptIdByName.get(nm);
+        if (id) out.push(id);
+      }
+      // 중복 제거
+      return Array.from(new Set(out));
+    },
+    [deptIdByName]
+  );
+
+  const loadEducationsOnce = useCallback(async () => {
+    if (!educationLoaderFn) {
+      setEduError("교육 목록 로더 함수가 없습니다. (useCreatorStudioController.ts에서 교육 목록 API를 노출해야 합니다.)");
+      return;
+    }
+    setEduLoading(true);
+    setEduError(null);
+    try {
+      const raw = await Promise.resolve(educationLoaderFn());
+      const list = toEducationList(raw);
+      setEducations(list);
+
+      // 최초 오픈 시 1개 기본 선택
+      if (!eduSelectedId && list.length > 0) setEduSelectedId(list[0].id);
+    } catch {
+      setEduError("교육 목록을 불러오지 못했습니다. Network 탭에서 교육 목록 요청이 발생하는지 확인하세요.");
+    } finally {
+      setEduLoading(false);
+    }
+  }, [educationLoaderFn, eduSelectedId]);
+
+  useEffect(() => {
+    if (!eduPickerOpen) return;
+    if (educations.length > 0) return;
+    // 모달이 열릴 때 1회 로드
+    loadEducationsOnce();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eduPickerOpen]);
+
+  const filteredEducations = useMemo(() => {
+    const q = normalizeText(eduPickerQuery);
+    if (!q) return educations;
+
+    const tokens = q.split(/\s+/).filter(Boolean);
+    if (tokens.length === 0) return educations;
+
+    return educations.filter((e) => {
+      const deptText = Array.isArray(e.departmentScope) ? e.departmentScope.join(" ") : "";
+      const period = formatIsoRange(e.startAt, e.endAt);
+      const hay = normalizeText([e.title, deptText, period].filter(Boolean).join(" "));
+      return tokens.every((t) => hay.includes(t));
+    });
+  }, [educations, eduPickerQuery]);
+
+  // 생성 직후 “선택한 교육 메타 주입”을 위한 pending ref
+  const pendingEducationApplyRef = useRef<CreatorEducationWithVideosItem | null>(null);
+  const pendingPreSelectedItemIdRef = useRef<string>("");
+  const pendingTargetItemIdRef = useRef<string>("");
+
+  const applyEducationMetaToSelected = useCallback((edu: CreatorEducationWithVideosItem) => {
+    if (!selectedItem) return;
+
+    const patch: Record<string, unknown> = {};
+    // WorkItem이 educationId를 안 들고 있으면 심어준다(뷰/표시/잠금 판단용)
+    patch.educationId = edu.id;
+
+    // title은 백엔드가 이미 설정할 수 있으므로 “명백히 더미/빈 값”일 때만 덮는다
+    const curTitle = String(selectedItem.title ?? "").trim();
+    if (!curTitle || curTitle.includes("새 교육")) {
+      const pendingTitle = pendingDraftTitleRef.current.trim();
+      patch.title = pendingTitle || edu.title;
+    }
+
+    // 대상 부서: 교육의 departmentScope(부서명)을 현재 부서 카탈로그(부서명→id)로 매핑
+    if (Array.isArray(edu.departmentScope)) {
+      const names = edu.departmentScope.filter((x) => typeof x === "string" && x.trim()) as string[];
+      if (names.length === 0) {
+        // 전사(전체)로 해석: targetDeptIds=[]
+        patch.targetDeptIds = [];
+      } else {
+        const mapped = mapDeptNamesToIds(names);
+        if (mapped.length > 0) {
+          patch.targetDeptIds = mapped;
+        } else {
+          // 매핑 실패 시에도 초안 생성은 계속 진행 (부서는 빈 배열로 설정)
+          // 경고 메시지는 표시하되, 초안 생성은 중단하지 않음
+          patch.targetDeptIds = [];
+          showToast(
+            "info",
+            "선택한 교육의 대상 부서를 현재 부서 목록에서 매핑하지 못했습니다. 부서 카탈로그(명칭/옵션)를 확인해주세요. 초안은 생성되지만 부서 설정이 비어있습니다.",
+            5000
+          );
+        }
+      }
+    }
+
+    updateSelectedMetaCompat(patch);
+  },
+    [mapDeptNamesToIds, selectedItem, showToast, updateSelectedMetaCompat]
+  );
+
+  // selectedItem이 “새로 생성된 초안”으로 바뀌는 시점에 교육 메타를 1회 주입
+  useEffect(() => {
+    const pendingEdu = pendingEducationApplyRef.current;
+    if (!pendingEdu) return;
+    if (!selectedItem) return;
+
+    const pre = pendingPreSelectedItemIdRef.current;
+    const targetId = pendingTargetItemIdRef.current;
+
+    const selectedId = selectedItem.id;
+
+    // (1) create 함수가 id를 반환한 경우: 그 id가 선택됐을 때 적용
+    if (targetId && selectedId !== targetId) return;
+
+    // (2) id를 모르는 경우: “생성 전 선택 id”와 다르면 새 초안으로 판단하고 적용
+    if (!targetId && pre && selectedId === pre) return;
+
+    pendingEducationApplyRef.current = null;
+    pendingPreSelectedItemIdRef.current = "";
+    pendingTargetItemIdRef.current = "";
+    pendingDraftTitleRef.current = "";
+
+    applyEducationMetaToSelected(pendingEdu);
+  }, [selectedItem, applyEducationMetaToSelected]);
+
+  const openEducationPicker = useCallback(() => {
+    setEduPickerQuery("");
+    setEduError(null);
+    setEduPickerOpen(true);
+
+    if (boundEducationId) {
+      setEduSelectedId(boundEducationId);
+    } else if (educations.length > 0) {
+      setEduSelectedId((prev) => prev || educations[0].id);
+    }
+  }, [boundEducationId, educations]);
+
+  // createDraftForEducation에 넘길 "버전명(title)" 규칙
+  // - 동일 educationId로 이미 생성된 workItem들의 max(version)+1 기반
+  // - 제목은 UI의 vN 뱃지와 중복되지 않도록 "N차 초안" 형태로 구성
+  const buildDraftTitleForEducation = useCallback(
+    (edu: CreatorEducationWithVideosItem) => {
+      const base = String(edu.title ?? "").trim() || "새 교육 콘텐츠";
+
+      let maxVersion = 0;
+      for (const it of rawItems) {
+        const eid = readOptionalString(it as unknown, "educationId") ?? "";
+        if (eid !== edu.id) continue;
+
+        const v = typeof it.version === "number" ? it.version : Number(it.version ?? 0);
+        if (Number.isFinite(v) && v > maxVersion) maxVersion = v;
+      }
+
+      const next = Math.max(1, maxVersion + 1);
+      return `${base} - ${next}차 초안`;
+    },
+    [rawItems]
+  );
+
+  // 생성 직후 title 보정이 필요할 때를 대비 (백엔드가 title 미세팅/더미인 경우)
+  const pendingDraftTitleRef = useRef<string>("");
+
+
+  const confirmEducationAndCreateDraft = useCallback(async () => {
+    const edu = educationsById.get(eduSelectedId);
+    if (!edu) {
+      showToast("info", "교육을 선택해주세요.");
+      return;
+    }
+
+    // 생성 전 선택 id(비교용)
+    pendingPreSelectedItemIdRef.current = selectedItem?.id ?? "";
+    pendingEducationApplyRef.current = edu;
+    pendingTargetItemIdRef.current = "";
+
+    setEduPickerOpen(false);
+
+    // 1) 컨트롤러에 createDraftForEducation(educationId, title)가 있으면 그걸 사용
+    if (educationCreateDraftFn) {
+      try {
+        const draftTitle = buildDraftTitleForEducation(edu);
+        pendingDraftTitleRef.current = draftTitle;
+
+        // createDraftForEducation 호출: 객체 형태로 전달 (컨트롤러에서 지원하는 형태)
+        const r = await Promise.resolve(
+          (educationCreateDraftFn as unknown as (args: {
+            educationId: string;
+            title: string;
+            departmentScope?: string[];
+          }) => Promise<unknown> | unknown)({
+            educationId: edu.id,
+            title: draftTitle,
+            departmentScope: Array.isArray(edu.departmentScope) && edu.departmentScope.length > 0
+              ? edu.departmentScope
+              : undefined,
+          })
+        );
+
+        // 반환값이 (id|string|{id}) 일 수 있으니 최대한 해석
+        const rid =
+          typeof r === "string"
+            ? r
+            : r && typeof r === "object"
+              ? readOptionalString(r, "id") ?? ""
+              : "";
+
+        if (rid) {
+          pendingTargetItemIdRef.current = rid;
+          selectItem(rid);
+        }
+        return;
+      } catch {
+        showToast("error", "초안 생성에 실패했습니다. (createDraftForEducation 시그니처: educationId + title 확인 필요)");
+        return;
+      }
+    }
+
+    // 2) 없으면 기존 createDraft를 호출하되, 이 경우는 controller 수정이 필요하다는 토스트를 띄운다
+    showToast(
+      "info",
+      "현재는 ‘교육 선택 후 초안 생성’ 함수가 컨트롤러에 없습니다. 다음 단계로 useCreatorStudioController.ts를 수정해야 합니다."
+    );
+    try {
+      await Promise.resolve(createDraft());
+    } catch {
+      // createDraft 자체가 실패할 수 있음
+    }
+  }, [
+    createDraft,
+    educationsById,
+    eduSelectedId,
+    educationCreateDraftFn,
+    buildDraftTitleForEducation,
+    selectItem,
+    selectedItem?.id,
+    showToast,
+  ]);
 
   useEffect(() => {
     const currentSize = fitSizeToViewport(sizeRef.current);
@@ -1809,7 +2254,9 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
   const creatorFiles: ProjectFileItem[] = useMemo(() => {
     if (!selectedItem) return [];
     const src = readSourceFiles(selectedItem);
-    return src.map((f, idx) => ({
+    // SRC_TMP로 시작하는 임시 ID는 제외 (업로드 중인 파일은 모달에서 표시하지 않음)
+    const completedFiles = src.filter((f) => !f.id.startsWith("SRC_TMP"));
+    return completedFiles.map((f, idx) => ({
       id: f.id,
       name: f.name,
       sizeBytes: f.size,
@@ -1875,10 +2322,10 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
                 <button
                   className="cb-admin-primary-btn cb-creator-create-btn"
                   onMouseDown={(e) => e.stopPropagation()}
-                  onClick={createDraft}
+                  onClick={openEducationPicker}
                   type="button"
                 >
-                  새 교육 만들기
+                  교육 선택 후 콘텐츠 만들기
                 </button>
               </div>
             </div>
@@ -2148,12 +2595,24 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
                               <div className="cb-creator-field-label">제목</div>
                               <input
                                 className="cb-admin-input"
-                                value={selectedItem.title}
+                                value={localTitle}
                                 disabled={disableMeta}
                                 onMouseDown={(e) => e.stopPropagation()}
-                                onChange={(e) =>
-                                  updateSelectedMeta({ title: e.target.value })
-                                }
+                                onChange={(e) => {
+                                  const newTitle = e.target.value;
+                                  setLocalTitle(newTitle);
+                                  debouncedSaveTitle(newTitle);
+                                }}
+                                onBlur={() => {
+                                  // 포커스가 벗어날 때 즉시 저장 (debounce 타이머가 있다면 취소하고 바로 저장)
+                                  if (titleDebounceTimerRef.current) {
+                                    clearTimeout(titleDebounceTimerRef.current);
+                                    titleDebounceTimerRef.current = null;
+                                  }
+                                  if (selectedItem && localTitle !== selectedItem.title) {
+                                    updateSelectedMeta({ title: localTitle });
+                                  }
+                                }}
                               />
                             </label>
 
@@ -2245,7 +2704,7 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
                                     disabled={
                                       disableMeta ||
                                       creatorType === "DEPT_CREATOR" ||
-                                      // 부서 목록이 아직 없으면 “전사 해제”가 다시 []로 떨어져서 고정되므로 방지
+                                      boundDeptLocked ||
                                       (isAllCompany && selectableDepartments.length === 0)
                                     }
                                     onMouseDown={(e) => e.stopPropagation()}
@@ -2294,7 +2753,7 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
                                   <>
                                     {selectableDepartments.map((d) => {
                                       const checked = selectedItem.targetDeptIds.includes(d.id);
-                                      const disabled = disableMeta;
+                                      const disabled = disableMeta || boundDeptLocked;
 
                                       return (
                                         <label key={d.id} className="cb-creator-checkitem">
@@ -2371,10 +2830,19 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
 
                             <div className="cb-creator-upload-filename">
                               {(() => {
-                                const src = readSourceFiles(selectedItem);
+                                // 업로드 완료된 파일만 표시 (SRC_TMP로 시작하는 임시 ID 제외)
+                                const src = readSourceFiles(selectedItem).filter(
+                                  (f) => !f.id.startsWith("SRC_TMP")
+                                );
+                                
                                 if (src.length > 0) {
                                   const first = src[0];
                                   const extra = src.length > 1 ? ` 외 ${src.length - 1}개` : "";
+                                  // 업로드 중인 파일이 있는지 확인
+                                  const uploading = readSourceFiles(selectedItem).some(
+                                    (f) => f.id.startsWith("SRC_TMP")
+                                  );
+                                  
                                   return (
                                     <>
                                       업로드됨: {first.name}
@@ -2382,10 +2850,14 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
                                       {typeof first.size === "number" && first.size > 0 ? (
                                         <span className="cb-creator-muted">{` (${formatBytes(first.size)})`}</span>
                                       ) : null}
+                                      {uploading ? (
+                                        <span className="cb-creator-muted"> · 업로드 중...</span>
+                                      ) : null}
                                     </>
                                   );
                                 }
 
+                                // sourceFiles가 없을 때만 레거시 필드 확인
                                 const name = readSourceFileName(selectedItem);
                                 const size = readSourceFileSize(selectedItem);
 
@@ -2687,6 +3159,123 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
           )}
         </div>
       </div>
+
+      {eduPickerOpen &&
+        createPortal(
+          <div
+            className="cb-creator-edu-modal-overlay"
+            onMouseDown={() => setEduPickerOpen(false)}
+            role="presentation"
+          >
+            <div
+              className="cb-creator-edu-modal"
+              role="dialog"
+              aria-label="교육 선택"
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              <div className="cb-creator-edu-modal__head">
+                <div className="cb-creator-edu-modal__head-left">
+                  <div className="cb-creator-edu-modal__badge">EDUCATION</div>
+                  <div className="cb-creator-edu-modal__title">교육 선택</div>
+                  <div className="cb-creator-edu-modal__desc">
+                    교육을 선택하면 해당 교육을 기반으로 초안이 생성됩니다.
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  className="cb-creator-edu-modal__close"
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={() => setEduPickerOpen(false)}
+                  aria-label="닫기"
+                >
+                  ×
+                </button>
+              </div>
+
+              <div className="cb-creator-edu-modal__body">
+                <div className="cb-creator-edu-modal__search">
+                  <input
+                    className="cb-admin-input cb-creator-edu-modal__search-input"
+                    placeholder="교육명/대상부서/기간 검색"
+                    value={eduPickerQuery}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onChange={(e) => setEduPickerQuery(e.target.value)}
+                  />
+
+                  <button
+                    type="button"
+                    className="cb-admin-ghost-btn cb-creator-edu-modal__reload"
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onClick={loadEducationsOnce}
+                    disabled={eduLoading}
+                  >
+                    새로고침
+                  </button>
+                </div>
+
+                {eduError ? <div className="cb-creator-edu-modal__error">{eduError}</div> : null}
+
+                <div className="cb-creator-edu-modal__list" role="listbox" aria-label="교육 목록">
+                  {eduLoading ? (
+                    <div className="cb-creator-edu-modal__empty">불러오는 중…</div>
+                  ) : filteredEducations.length === 0 ? (
+                    <div className="cb-creator-edu-modal__empty">검색 결과가 없습니다.</div>
+                  ) : (
+                    filteredEducations.map((e) => {
+                      const selected = e.id === eduSelectedId;
+                      const period = formatIsoRange(e.startAt, e.endAt);
+                      const deptText = Array.isArray(e.departmentScope) && e.departmentScope.length > 0
+                        ? e.departmentScope.join(", ")
+                        : "전사";
+
+                      return (
+                        <button
+                          key={e.id}
+                          type="button"
+                          role="option"
+                          aria-selected={selected}
+                          className={cx("cb-creator-edu-row", selected && "cb-creator-edu-row--selected")}
+                          onMouseDown={(ev) => ev.stopPropagation()}
+                          onClick={() => setEduSelectedId(e.id)}
+                        >
+                          <div className="cb-creator-edu-row__title">{e.title}</div>
+                          <div className="cb-creator-edu-row__meta">
+                            <span className="cb-creator-edu-row__dept">{deptText}</span>
+                            <span className="cb-creator-edu-row__dot">·</span>
+                            <span className="cb-creator-edu-row__period">{period}</span>
+                          </div>
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+
+                <div className="cb-creator-edu-modal__actions">
+                  <button
+                    type="button"
+                    className="cb-admin-ghost-btn"
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onClick={() => setEduPickerOpen(false)}
+                  >
+                    취소
+                  </button>
+
+                  <button
+                    type="button"
+                    className="cb-admin-primary-btn"
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onClick={confirmEducationAndCreateDraft}
+                    disabled={!eduSelectedId || eduLoading}
+                  >
+                    선택한 교육으로 초안 생성
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
 
       <ProjectFilesModal
         open={filesModalOpen}

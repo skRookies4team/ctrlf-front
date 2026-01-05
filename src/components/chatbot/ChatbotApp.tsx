@@ -385,6 +385,54 @@ async function fetchServerSessionHistory(serverSessionId: string): Promise<{
       updatedAt: Date.now(),
     };
 
+  // 스펙 엔드포인트 시도: GET /api/chat/sessions/{sessionId}/history
+  // 스펙 응답: { sessionId, title, messages: [...] }
+  const historyUrl = `/api/chat/sessions/${encodeURIComponent(serverSessionId)}/history`;
+  const historyResponse = await apiFetchJson<{
+    sessionId?: string;
+    title?: string;
+    messages?: ServerHistoryMessage[];
+  }>(historyUrl, { method: "GET" });
+
+  if (historyResponse.ok && historyResponse.data) {
+    const historyData = historyResponse.data;
+    const messages = pickMessagesArray(historyData);
+    
+    if (messages.length > 0) {
+      const now = Date.now();
+      const normalized = messages
+        .filter((m) => trimStr((m.content ?? m.text)?.toString()).length > 0)
+        .map((m, idx) => {
+          const role = normalizeRole(m.role ?? m.sender);
+          const content = trimStr(m.content ?? m.text ?? "");
+          const created = toEpochMs(m.createdAt ?? m.created_at ?? m.timestamp, now + idx);
+
+          return {
+            role,
+            content,
+            createdAt: created,
+            serverMessageId: (m.id ?? m.messageId) as string | undefined,
+          };
+        });
+
+      const updatedAt =
+        normalized.length > 0 ? normalized[normalized.length - 1].createdAt : meta.updatedAt;
+
+      // 스펙 응답에서 title이 있으면 사용
+      const finalTitle = trimStr(historyData.title) || meta.title;
+
+      return {
+        serverSessionId,
+        title: finalTitle,
+        domain: meta.domain,
+        createdAt: meta.createdAt,
+        updatedAt,
+        messages: normalized,
+      };
+    }
+  }
+
+  // Fallback: 기존 엔드포인트 사용 (/chat/sessions/{sessionId}/messages)
   const pageSize = 100;
   let cursor: string | null = null;
   let hasNext = true;
