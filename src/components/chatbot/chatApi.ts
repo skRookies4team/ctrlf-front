@@ -941,12 +941,54 @@ export async function retryMessage(
       nonEmptyString(parsed["created_at"]) ??
       new Date().toISOString();
 
+    // AI 응답의 meta.action 또는 action 필드에서 액션 정보 추출 (일반 메시지와 동일)
+    let action: ChatAction | undefined;
+    const metaObj = parsed["meta"];
+    const actionData = isRecord(metaObj)
+      ? metaObj["action"]
+      : parsed["action"];
+
+    if (isRecord(actionData) && typeof actionData["type"] === "string") {
+      action = {
+        type: actionData["type"] as ChatAction["type"],
+        educationId:
+          nonEmptyString(actionData["education_id"]) ??
+          nonEmptyString(actionData["educationId"]) ??
+          undefined,
+        videoId:
+          nonEmptyString(actionData["video_id"]) ??
+          nonEmptyString(actionData["videoId"]) ??
+          undefined,
+        resumePositionSeconds:
+          typeof actionData["resume_position_seconds"] === "number"
+            ? actionData["resume_position_seconds"]
+            : typeof actionData["resumePositionSeconds"] === "number"
+              ? actionData["resumePositionSeconds"]
+              : undefined,
+        educationTitle:
+          nonEmptyString(actionData["education_title"]) ??
+          nonEmptyString(actionData["educationTitle"]) ??
+          undefined,
+        videoTitle:
+          nonEmptyString(actionData["video_title"]) ??
+          nonEmptyString(actionData["videoTitle"]) ??
+          undefined,
+        progressPercent:
+          typeof actionData["progress_percent"] === "number"
+            ? actionData["progress_percent"]
+            : typeof actionData["progressPercent"] === "number"
+              ? actionData["progressPercent"]
+              : undefined,
+      };
+    }
+
     return {
       sessionId: returnedSessionId ?? sessionId,
       messageId: returnedMessageId ?? messageId,
       role: "assistant",
       content: extractedContent.trim() ? extractedContent : "응답이 비어 있습니다.",
       createdAt,
+      action,
     };
   }
 
@@ -1600,6 +1642,56 @@ export async function sendChatToAIStream(
     role: "assistant",
     content: streamed || sent.content || "응답이 비어 있습니다.",
     createdAt: sent.createdAt || new Date().toISOString(),
+  };
+
+  handlers.onFinal?.(final);
+  return final;
+}
+
+/**
+ * 재시도 메시지 스트리밍 (일반 메시지와 동일한 스트리밍 방식)
+ * - retryMessage를 호출하여 messageId를 얻고, 그 messageId로 스트리밍을 시작
+ * - 서버가 스트림을 못 주면 retryMessage의 응답을 fallback으로 사용
+ */
+export async function retryMessageStream(
+  sessionId: string,
+  messageId: string,
+  handlers: ChatStreamHandlers
+): Promise<ChatSendResult> {
+  const token = await ensureFreshToken();
+  if (!token) throw new Error("Not authenticated: Keycloak token is missing.");
+
+  if (!isUuidLike(sessionId) || !isUuidLike(messageId)) {
+    throw new Error("Retry failed: sessionId/messageId must be UUID.");
+  }
+
+  // 1) 먼저 retryMessage를 호출하여 새 messageId 확보
+  const retryResult = await retryMessage(sessionId, messageId);
+  const newMessageId = retryResult.messageId;
+
+  // 2) 새 messageId로 스트리밍 시작
+  let streamed = "";
+  try {
+    const r = await streamMessageByIdSSE(newMessageId, token, handlers.onDelta);
+    streamed = r.content;
+  } catch (err: unknown) {
+    console.warn(
+      "[chatApi] retryMessageStream SSE failed; falling back to non-stream response",
+      err
+    );
+    // SSE가 실패하거나 서버가 스트림을 안 주는 경우: UX를 위해 최소 1회 델타로라도 반영
+    const fallback = retryResult.content || "응답이 비어 있습니다.";
+    handlers.onDelta(fallback);
+    streamed = fallback;
+  }
+
+  const final: ChatSendResult = {
+    sessionId: retryResult.sessionId ?? sessionId,
+    messageId: newMessageId,
+    role: "assistant",
+    content: streamed || retryResult.content || "응답이 비어 있습니다.",
+    createdAt: retryResult.createdAt || new Date().toISOString(),
+    action: retryResult.action,
   };
 
   handlers.onFinal?.(final);
