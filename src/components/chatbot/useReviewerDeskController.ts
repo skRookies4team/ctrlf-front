@@ -1,10 +1,6 @@
 // src/components/chatbot/useReviewerDeskController.ts
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  createMockReviewWorkItems,
-  formatDateTime,
-  mutateMockForConflict,
-} from "./reviewerDeskMocks";
+import { formatDateTime } from "./creatorStudioUtils";
 import type {
   AuditAction,
   ContentCategory,
@@ -15,10 +11,8 @@ import type {
 } from "./reviewerDeskTypes";
 
 import { getReviewerApi, type ReviewerApi } from "./reviewerApi";
-import { createReviewerApiMock } from "./reviewerApiMock";
 import { isReviewerApiError } from "./reviewerApiErrors";
 import type { ConflictPayload } from "./reviewerApiTypes";
-import { subscribeReviewStore } from "./reviewFlowStore";
 
 export type ReviewerTabId = "pending" | "approved" | "rejected" | "my";
 export type DetailTabId = "preview" | "script" | "checks" | "audit";
@@ -28,8 +22,14 @@ export type ListMode = "paged" | "virtual";
 export type ReviewStageFilter = "all" | "stage1" | "stage2" | "docs";
 type StageCounts = { all: number; stage1: number; stage2: number; docs: number };
 
-function getReviewStage(it: ReviewWorkItem): 1 | 2 | null {
+export function getReviewStage(it: ReviewWorkItem): 1 | 2 | null {
   if (it.contentType !== "VIDEO") return null; // 문서/정책 등
+  
+  // reviewStage 필드를 우선 확인 (백엔드에서 명시적으로 설정한 값 사용)
+  if (it.reviewStage === "FINAL") return 2;
+  if (it.reviewStage === "SCRIPT") return 1;
+  
+  // reviewStage가 없으면 videoUrl로 판단 (하위 호환성)
   return it.videoUrl?.trim() ? 2 : 1; // VIDEO: videoUrl 있으면 2차(최종)
 }
 
@@ -58,12 +58,6 @@ export type ActionGuardInfo = {
 
 export interface UseReviewerDeskControllerOptions {
   reviewerName?: string;
-}
-
-function getEnvString(key: string): string | undefined {
-  const env = import.meta.env as unknown as Record<string, unknown>;
-  const v = env[key];
-  return typeof v === "string" ? v : undefined;
 }
 
 function statusLabel(s: ReviewStatus) {
@@ -105,32 +99,6 @@ function piiTone(level: PiiRiskLevel): "neutral" | "warn" | "danger" {
   if (level === "high") return "danger";
   if (level === "medium") return "warn";
   return "neutral";
-}
-
-function readLockOwnerName(lock: unknown): string | undefined {
-  if (!lock || typeof lock !== "object") return undefined;
-  const l = lock as Record<string, unknown>;
-
-  const ownerName = l["ownerName"];
-  if (typeof ownerName === "string" && ownerName.trim()) return ownerName.trim();
-
-  const owner = l["owner"];
-  if (typeof owner === "string" && owner.trim()) return owner.trim();
-
-  // 레거시 방어 (owner: {name})
-  if (owner && typeof owner === "object") {
-    const o = owner as Record<string, unknown>;
-    const nm = o["name"];
-    if (typeof nm === "string" && nm.trim()) return nm.trim();
-  }
-  return undefined;
-}
-
-function readLockExpiresAt(lock: unknown): string | undefined {
-  if (!lock || typeof lock !== "object") return undefined;
-  const l = lock as Record<string, unknown>;
-  const exp = l["expiresAt"];
-  return typeof exp === "string" ? exp : undefined;
 }
 
 type WorkItemLockView = WorkItemLock & {
@@ -267,10 +235,6 @@ function toStdHttpErrorMessage(
   };
 }
 
-function isMissingLinkedDocMessage(msg: string | null) {
-  if (!msg) return false;
-  return msg.includes("연결된 문서를 찾을 수 없습니다");
-}
 
 function isPolicyDocItem(it: ReviewWorkItem) {
   return it.contentType === "POLICY_DOC" || it.contentCategory === "POLICY";
@@ -289,19 +253,9 @@ function readPolicyMeta(it: ReviewWorkItem): { documentId: string; versionLabel:
   return { documentId, versionLabel };
 }
 
-// id 기반 병합(중복 제거) 유틸
-function mergeUniqueById<T extends { id: string }>(lists: T[][]): T[] {
-  const map = new Map<string, T>();
-  for (const arr of lists) for (const it of arr) map.set(it.id, it);
-  return Array.from(map.values());
-}
 
 export function useReviewerDeskController(options: UseReviewerDeskControllerOptions) {
   const effectiveReviewerName = options.reviewerName ?? "Reviewer";
-
-  const apiModeRaw = getEnvString("VITE_REVIEWER_API_MODE");
-  const apiMode: "mock" | "http" = apiModeRaw === "http" ? "http" : "mock";
-  const isHttpMode = apiMode === "http";
 
   // ===== toast 표준화 =====
   const TOAST_MS = 2200;
@@ -358,34 +312,14 @@ export function useReviewerDeskController(options: UseReviewerDeskControllerOpti
     };
   }, []);
 
-  // ===== mock data (운영 시나리오 + 대량 생성 지원) =====
-  const [datasetKey, setDatasetKey] = useState<"base" | "load">("base");
-
-  const seedItems = useMemo((): ReviewWorkItemExt[] => {
-    const preset = datasetKey === "load" ? "load" : "base";
-    const total = datasetKey === "load" ? 800 : 120;
-    const seed = datasetKey === "load" ? 23 : 7;
-    return createMockReviewWorkItems({
-      preset,
-      reviewerName: effectiveReviewerName,
-      total,
-      seed,
-    }) as ReviewWorkItemExt[];
-  }, [datasetKey, effectiveReviewerName]);
-
-  // Reviewer API 인스턴스 (mock 모드에서는 seedItems로 store를 구성)
+  // Reviewer API 인스턴스
   const apiRef = useRef<ReviewerApi | null>(null);
   if (!apiRef.current) {
-    apiRef.current = isHttpMode
-      ? getReviewerApi()
-      : createReviewerApiMock({
-          initialItems: seedItems,
-          me: { id: effectiveReviewerName, name: effectiveReviewerName },
-        });
+    apiRef.current = getReviewerApi();
   }
 
-  // http 모드: 최초 refresh로 세팅 / mock 모드: seedItems로 초기화
-  const [items, setItems] = useState<ReviewWorkItemExt[]>(() => (isHttpMode ? [] : seedItems));
+  // http 모드: 최초 refresh로 세팅
+  const [items, setItems] = useState<ReviewWorkItemExt[]>([]);
 
   // 탭/필터/정렬
   const [activeTab, setActiveTab] = useState<ReviewerTabId>("pending");
@@ -401,11 +335,18 @@ export function useReviewerDeskController(options: UseReviewerDeskControllerOpti
   }, [activeTab, onlyMine]);
 
   // 리스트 모드(페이지/가상스크롤)
-  const [listMode, setListMode] = useState<ListMode>(() =>
-    (isHttpMode ? 0 : seedItems.length) >= 260 ? "virtual" : "paged"
-  );
+  const [listMode, setListMode] = useState<ListMode>("paged");
   const [pageSize, setPageSize] = useState<number>(30);
   const [pageIndex, setPageIndex] = useState<number>(0);
+  
+  // pageSize 변경 시 pageIndex를 적절히 조정하기 위한 ref
+  const prevPageSizeRef = useRef<number>(pageSize);
+  const pageIndexRef = useRef<number>(pageIndex);
+  
+  // pageIndex ref 동기화
+  useEffect(() => {
+    pageIndexRef.current = pageIndex;
+  }, [pageIndex]);
 
   // 선택
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -527,132 +468,235 @@ export function useReviewerDeskController(options: UseReviewerDeskControllerOpti
       setIsRefreshing(true);
 
       try {
-        const api = apiRef.current!;
-        const [p, a, r] = await Promise.all([
-          api.listWorkItems({ tab: "REVIEW_PENDING", limit: 2000 }),
-          api.listWorkItems({ tab: "APPROVED", limit: 2000 }),
-          api.listWorkItems({ tab: "REJECTED", limit: 2000 }),
-        ]);
+        const api = apiRef.current;
+        if (!api) {
+          throw new Error("API 인스턴스가 초기화되지 않았습니다.");
+        }
+        
+        // 백엔드 API 사용: 현재 activeTab과 필터 조건에 맞는 데이터만 조회
+        const reviewStageMap: Record<ReviewStageFilter, "first" | "second" | "document" | "all" | undefined> = {
+          all: undefined,
+          stage1: "first",
+          stage2: "second",
+          docs: "document",
+        };
 
-        const merged = mergeUniqueById([
-          p.items as ReviewWorkItemExt[],
-          a.items as ReviewWorkItemExt[],
-          r.items as ReviewWorkItemExt[],
-        ]);
+        // page는 0 이상이어야 함 (0-base)
+        // pageIndexRef를 사용하여 최신 값을 참조 (pageSize 변경 시에도 안정적)
+        const currentPageIndex = pageIndexRef.current;
+        const safePageIndex = Math.max(0, currentPageIndex);
+        // size는 1 이상이어야 함
+        const safePageSize = Math.max(1, pageSize);
 
-        setItems(merged);
+        const params: import("./reviewerApiTypes").ReviewListParams = {
+          tab: activeTab === "pending" ? "REVIEW_PENDING" 
+            : activeTab === "approved" ? "APPROVED"
+            : activeTab === "rejected" ? "REJECTED"
+            : "MY_ACTIVITY",
+          q: query.trim() || undefined,
+          sort: sortMode === "newest" ? "NEWEST" : sortMode === "risk" ? "RISK_HIGH" : "OLDEST",
+          myProcessingOnly: onlyMine || undefined,
+          reviewStage: reviewStageMap[stageFilter],
+          page: safePageIndex,
+          size: safePageSize,
+        };
+
+        const response = await api.listWorkItems(params);
+        
+        // 응답이 유효한지 확인
+        if (response && Array.isArray(response.items)) {
+          setItems(response.items as ReviewWorkItemExt[]);
+          
+          // totalPages 업데이트 (백엔드에서 받은 값 사용)
+          if (response.totalPages !== undefined) {
+            setBackendTotalPages(response.totalPages);
+          }
+          
+          // stage counts 업데이트 (백엔드에서 받은 값 사용)
+          // 백엔드는 필터와 관계없이 전체 카운트를 제공함
+          if (response.firstRoundCount !== undefined || 
+              response.secondRoundCount !== undefined || 
+              response.documentCount !== undefined) {
+            const all = (response.firstRoundCount ?? 0) + 
+                       (response.secondRoundCount ?? 0) + 
+                       (response.documentCount ?? 0);
+            setBackendStageCounts({
+              all,
+              stage1: response.firstRoundCount ?? 0,
+              stage2: response.secondRoundCount ?? 0,
+              docs: response.documentCount ?? 0,
+            });
+          }
+        } else {
+          // 응답이 유효하지 않으면 빈 배열로 설정
+          setItems([]);
+          setBackendTotalPages(0);
+          setBackendStageCounts(null);
+        }
+
         setLastRefreshedAt(new Date().toISOString());
         if (!opts?.silent) toastStd.ok("새로고침 완료");
       } catch (err) {
-        if (import.meta.env.DEV) console.warn("[ReviewerDesk] refreshAllFromApi failed", err);
-        toastStd.err("새로고침에 실패했습니다.");
+        if (import.meta.env.DEV) {
+          console.error("[ReviewerDesk] refreshAllFromApi failed", err);
+        }
+        // 에러 발생 시에도 빈 배열로 설정하여 컴포넌트가 렌더링되도록 함
+        setItems([]);
+        setBackendTotalPages(0);
+        setBackendStageCounts(null);
+        if (!opts?.silent) {
+          toastStd.err("새로고침에 실패했습니다.");
+        }
       } finally {
         isRefreshingRef.current = false;
         setIsRefreshing(false);
       }
     },
-    [toastStd]
+    [toastStd, activeTab, query, sortMode, onlyMine, stageFilter, pageSize] // pageIndex는 pageIndexRef로 참조
   );
 
-  // http 모드: 최초 1회 로딩
+  // pageSize 변경으로 인한 pageIndex 조정을 추적하는 ref
+  const isPageSizeChangingRef = useRef(false);
+  // 사용자가 직접 페이지를 변경했는지 추적하는 ref (자동 페이지 이동 방지용)
+  const isUserPageChangeRef = useRef(false);
+  // stageFilter 변경으로 인한 pageIndex 자동 리셋을 추적하는 ref
+  const isStageFilterChangingRef = useRef(false);
+  
+  // 필터 변경 시 pageIndex를 0으로 리셋하고 API 재조회
+  const prevFiltersRef = useRef<{ stageFilter: ReviewStageFilter; activeTab: ReviewerTabId; query: string; sortMode: SortMode; onlyMine: boolean; pageSize: number } | null>(null);
+  const isInitialMountRef = useRef(true);
+  
   useEffect(() => {
-    if (!isHttpMode) return;
-    void refreshAllFromApi({ silent: true });
-  }, [isHttpMode, refreshAllFromApi]);
-
-  // datasetKey 변경 시(mock) api store 재시드 + 상태 초기화
-  useEffect(() => {
-    if (isHttpMode) return;
-
-    // 기존 락이 있으면 best-effort 해제 (mock에서도 상태 꼬임 방지)
-    const cur = decisionLockRef.current;
-    if (cur) {
-      void apiRef.current?.releaseLock(cur.itemId, cur.lockToken).catch(() => {});
-      decisionLockRef.current = null;
+    if (listMode === "virtual") return;
+    
+    const prev = prevFiltersRef.current;
+    const isInitial = isInitialMountRef.current;
+    
+    // 초기 마운트이거나 필터/페이지 크기가 변경된 경우
+    const filtersChanged = isInitial || 
+      !prev ||
+      prev.stageFilter !== stageFilter ||
+      prev.activeTab !== activeTab ||
+      prev.query !== query ||
+      prev.sortMode !== sortMode ||
+      prev.onlyMine !== onlyMine ||
+      prev.pageSize !== pageSize;
+    
+    if (filtersChanged) {
+      if (isInitial) {
+        isInitialMountRef.current = false;
+      }
+      prevFiltersRef.current = { stageFilter, activeTab, query, sortMode, onlyMine, pageSize };
+      
+      // 필터가 변경되면 첫 페이지로 이동하고 API 재조회
+      // 단, pageSize 변경만 있는 경우는 pageIndex를 리셋하지 않음 (pageSize 변경 useEffect에서 처리)
+      const isPageSizeOnlyChange = prev && 
+        prev.stageFilter === stageFilter &&
+        prev.activeTab === activeTab &&
+        prev.query === query &&
+        prev.sortMode === sortMode &&
+        prev.onlyMine === onlyMine &&
+        prev.pageSize !== pageSize;
+      
+      if (!isPageSizeOnlyChange) {
+        // 필터 변경이 있으면 첫 페이지로 이동
+        const currentPageIndex = pageIndexRef.current;
+        if (currentPageIndex !== 0) {
+          // pageIndex가 0이 아니면 0으로 리셋 (pageIndex 변경 useEffect에서 API 호출)
+          isStageFilterChangingRef.current = true; // 플래그 설정
+          setPageIndex(0);
+        } else {
+          // pageIndex가 이미 0이면 직접 API 호출
+          void refreshAllFromApi({ silent: true });
+        }
+      } else {
+        // pageSize만 변경된 경우는 pageSize 변경 useEffect에서 처리
+        // 여기서는 API 호출하지 않음
+      }
     }
-
-    apiRef.current = createReviewerApiMock({
-      initialItems: seedItems,
-      me: { id: effectiveReviewerName, name: effectiveReviewerName },
-    });
-
-    setItems(seedItems);
-    setActiveTab("pending");
-    setDetailTab("preview");
-    setQuery("");
-    setOnlyMine(false);
-    setRiskOnly(false);
-    setSortMode("newest");
-    setStageFilter("all");
-    setPageIndex(0);
-    setListMode(seedItems.length >= 260 ? "virtual" : "paged");
-    setSelectedId(null);
-    setLastRefreshedAt(new Date().toISOString());
-    setLockState({ kind: "idle" });
-    decisionCtxRef.current = null;
-    lockReqSeqRef.current += 1;
-  }, [datasetKey, seedItems, isHttpMode, effectiveReviewerName]);
-
-  // store 이벤트에서 최신 refresh 콜백을 쓰기 위한 ref
-  const refreshRef = useRef(refreshAllFromApi);
+  }, [stageFilter, activeTab, query, sortMode, onlyMine, pageSize, listMode, refreshAllFromApi]);
+  
+  // pageIndex 변경 시 재조회 (pageSize 변경으로 인한 조정은 제외)
   useEffect(() => {
-    refreshRef.current = refreshAllFromApi;
-  }, [refreshAllFromApi]);
-
-  useEffect(() => {
-    if (isHttpMode) return;
-    let t: number | null = null;
-
-    const unsub = subscribeReviewStore(() => {
-      if (t) window.clearTimeout(t);
-      t = window.setTimeout(() => {
-        void refreshRef.current({ silent: true, force: true });
-      }, 60);
-    });
-
-    void refreshRef.current({ silent: true, force: true });
-
-    return () => {
-      if (t) window.clearTimeout(t);
-      unsub();
-    };
-  }, [isHttpMode, datasetKey]);
+    // pageSize 변경으로 인한 pageIndex 조정인 경우 API 호출 스킵
+    if (isPageSizeChangingRef.current) {
+      isPageSizeChangingRef.current = false; // 플래그 리셋
+      return;
+    }
+    // stageFilter 변경으로 인한 자동 리셋인 경우 플래그 리셋만 하고 API 호출은 진행
+    if (isStageFilterChangingRef.current) {
+      isStageFilterChangingRef.current = false; // 플래그 리셋
+      // stageFilter 변경으로 인한 리셋이므로 isUserPageChangeRef는 설정하지 않음
+      void refreshAllFromApi({ silent: true });
+      return;
+    }
+    // 사용자가 직접 페이지를 변경한 경우 플래그 설정
+    isUserPageChangeRef.current = true;
+    void refreshAllFromApi({ silent: true });
+  }, [refreshAllFromApi, pageIndex]);
 
   // ===== counts =====
+  const [statsCounts, setStatsCounts] = useState<{
+    pending: number;
+    approved: number;
+    rejected: number;
+    my: number;
+  }>({ pending: 0, approved: 0, rejected: 0, my: 0 });
+
+  // 백엔드 API에서 통계 조회
+  useEffect(() => {
+    const api = apiRef.current;
+    if (!api || !("getReviewStats" in api) || typeof api.getReviewStats !== "function") return;
+
+    void (async () => {
+      try {
+        const stats = await api.getReviewStats!();
+        setStatsCounts({
+          pending: stats.pendingCount,
+          approved: stats.approvedCount,
+          rejected: stats.rejectedCount,
+          my: stats.myActivityCount,
+        });
+      } catch (err) {
+        if (import.meta.env.DEV) console.warn("[ReviewerDesk] getReviewStats failed", err);
+      }
+    })();
+  }, [lastRefreshedAt]);
+
   const counts = useMemo(() => {
+    // 백엔드 통계 사용 (통계 조회 실패 시 로컬 계산으로 폴백)
+    if (statsCounts.pending > 0 || statsCounts.approved > 0 || statsCounts.rejected > 0 || statsCounts.my > 0) {
+      return statsCounts;
+    }
+    
+    // 통계 조회 실패 시 로컬 계산
     const pending = items.filter((i) => i.status === "REVIEW_PENDING").length;
     const approved = items.filter((i) => i.status === "APPROVED").length;
     const rejected = items.filter((i) => i.status === "REJECTED").length;
     const mine = items.filter((i) => i.audit.some((a) => a.actor === effectiveReviewerName)).length;
     return { pending, approved, rejected, my: mine };
-  }, [items, effectiveReviewerName]);
+  }, [items, effectiveReviewerName, statsCounts]);
 
   // ===== filtered =====
+  // 백엔드 API에서 필터링된 결과를 받아오므로, 로컬 필터링은 최소화
   const filteredBase = useMemo(() => {
+    // 백엔드에서 이미 필터링된 items 사용
+    // 추가 로컬 필터링은 riskOnly, query만 적용
+    let filtered = items;
+
+    if (riskOnly) {
+      filtered = filtered.filter((it) => isRiskItem(it));
+    }
+
     const q = query.trim().toLowerCase();
+    if (q) {
+      filtered = filtered.filter((it) => {
+        const hay = `${it.title} ${it.department} ${it.creatorName}`.toLowerCase();
+        return hay.includes(q);
+      });
+    }
 
-    const byTab = items.filter((it) => {
-      if (activeTab === "pending") return it.status === "REVIEW_PENDING";
-      if (activeTab === "approved") return it.status === "APPROVED";
-      if (activeTab === "rejected") return it.status === "REJECTED";
-      return it.audit.some((a) => a.actor === effectiveReviewerName);
-    });
-
-    const byMine = onlyMine
-      ? byTab.filter((it) => it.audit.some((a) => a.actor === effectiveReviewerName))
-      : byTab;
-
-    const byRisk = riskOnly ? byMine.filter((it) => isRiskItem(it)) : byMine;
-
-    const byQuery = q
-      ? byRisk.filter((it) => {
-          const hay = `${it.title} ${it.department} ${it.creatorName}`.toLowerCase();
-          return hay.includes(q);
-        })
-      : byRisk;
-
-    const list = [...byQuery];
-
+    // 정렬
     const riskRank = (it: ReviewWorkItem) => {
       const pii = it.autoCheck.piiRiskLevel;
       const piiScore = pii === "high" ? 100 : pii === "medium" ? 60 : pii === "low" ? 20 : 0;
@@ -663,19 +707,40 @@ export function useReviewerDeskController(options: UseReviewerDeskControllerOpti
     };
 
     if (sortMode === "risk") {
-      list.sort((a, b) => {
+      filtered = [...filtered].sort((a, b) => {
         const diff = riskRank(b) - riskRank(a);
         if (diff !== 0) return diff;
         return a.submittedAt < b.submittedAt ? 1 : -1;
       });
-      return list;
+    } else {
+      filtered = [...filtered].sort((a, b) => (a.submittedAt < b.submittedAt ? 1 : -1));
     }
 
-    list.sort((a, b) => (a.submittedAt < b.submittedAt ? 1 : -1));
-    return list;
-  }, [items, activeTab, query, onlyMine, riskOnly, sortMode, effectiveReviewerName, isRiskItem]);
+    return filtered;
+  }, [items, query, riskOnly, sortMode, isRiskItem]);
 
+  // 백엔드에서 받은 stage counts 저장 (stageCounts useMemo보다 먼저 선언)
+  const [backendStageCounts, setBackendStageCounts] = useState<StageCounts | null>(null);
+  
+  // pagination 계산
+  // 백엔드에서 totalPages를 받아옴
+  const [backendTotalPages, setBackendTotalPages] = useState<number | null>(null);
+
+  // stageCounts는 백엔드 API에서 받은 값을 우선 사용
+  // 백엔드는 필터와 관계없이 전체 카운트를 제공함
   const stageCounts = useMemo((): StageCounts => {
+    // 백엔드에서 받은 stage counts가 있으면 사용
+    if (backendStageCounts) {
+      return backendStageCounts;
+    }
+    
+    // 백엔드에서 받은 값이 없으면 로컬 계산으로 폴백
+    // (초기 로딩 전이나 에러 발생 시)
+    // filteredBase가 아직 정의되지 않았을 수 있으므로 안전하게 처리
+    if (!filteredBase || !Array.isArray(filteredBase)) {
+      return { all: 0, stage1: 0, stage2: 0, docs: 0 };
+    }
+    
     let stage1 = 0;
     let stage2 = 0;
     let docs = 0;
@@ -688,36 +753,81 @@ export function useReviewerDeskController(options: UseReviewerDeskControllerOpti
     }
 
     return { all: filteredBase.length, stage1, stage2, docs };
-  }, [filteredBase]);
+  }, [backendStageCounts, filteredBase]);
 
+  // 백엔드에서 이미 stageFilter가 적용된 데이터를 받아오므로,
+  // 로컬에서 다시 stageFilter를 적용할 필요가 없음
+  // filtered는 filteredBase를 그대로 사용
   const filtered = useMemo(() => {
-    if (stageFilter === "all") return filteredBase;
-
-    if (stageFilter === "docs") {
-      return filteredBase.filter((it) => getReviewStage(it) === null);
-    }
-
-    const target = stageFilter === "stage1" ? 1 : 2;
-    return filteredBase.filter((it) => getReviewStage(it) === target);
-  }, [filteredBase, stageFilter]);
-
-  // pagination 계산
+    return filteredBase;
+  }, [filteredBase]);
+  
   const totalPages = useMemo(() => {
     if (listMode === "virtual") return 1;
+    if (backendTotalPages !== null) {
+      return backendTotalPages;
+    }
     return Math.max(1, Math.ceil(filtered.length / pageSize));
-  }, [filtered.length, pageSize, listMode]);
+  }, [filtered.length, pageSize, listMode, backendTotalPages]);
 
+  // pageSize 변경 시 pageIndex를 적절히 조정하고 API 재조회 (페이지 크기 변경 시 현재 보던 항목 유지)
   useEffect(() => {
     if (listMode === "virtual") return;
-    if (pageIndex > totalPages - 1) setPageIndex(totalPages - 1);
-  }, [pageIndex, totalPages, listMode]);
+    
+    const prevPageSize = prevPageSizeRef.current;
+    const currentPageIndex = pageIndexRef.current;
+    
+    if (prevPageSize !== pageSize && prevPageSize > 0 && currentPageIndex >= 0) {
+      // pageSize 변경 중임을 표시
+      isPageSizeChangingRef.current = true;
+      
+      // pageSize가 변경되었을 때, 현재 페이지의 첫 번째 항목 인덱스를 계산
+      const currentFirstItemIndex = currentPageIndex * prevPageSize;
+      // 새로운 pageSize에 맞는 pageIndex 계산 (현재 보던 항목이 포함된 페이지로 이동)
+      const newPageIndex = Math.max(0, Math.floor(currentFirstItemIndex / pageSize));
+      
+      // pageIndex를 업데이트 (totalPages가 업데이트되면 다시 조정됨)
+      if (newPageIndex !== currentPageIndex) {
+        setPageIndex(newPageIndex);
+        // pageIndex 변경 useEffect에서 API 호출 (isPageSizeChangingRef 플래그로 구분)
+      } else {
+        // pageIndex가 변경되지 않았으면 직접 API 호출
+        isPageSizeChangingRef.current = false; // 플래그 리셋
+        void refreshAllFromApi({ silent: true });
+      }
+    }
+    
+    // prevPageSizeRef 업데이트는 항상 수행
+    prevPageSizeRef.current = pageSize;
+  }, [pageSize, listMode, refreshAllFromApi]); // pageIndexRef를 사용하므로 dependency에서 제외
+  
+  // totalPages 변경 시 pageIndex 유효성 검증 및 조정
+  // pageSize 변경으로 인한 totalPages 변경 시에는 pageIndex를 유지하려고 시도
+  useEffect(() => {
+    if (listMode === "virtual") return;
+    
+    // totalPages가 0이면 조정하지 않음 (API 호출 중이거나 데이터가 없을 수 있음)
+    if (totalPages <= 0) return;
+    
+    // pageIndex가 유효한 범위를 벗어나면 조정
+    const currentPageIndex = pageIndexRef.current;
+    if (currentPageIndex > totalPages - 1) {
+      // 유효 범위를 벗어나면 마지막 페이지로 조정
+      setPageIndex(Math.max(0, totalPages - 1));
+    } else if (currentPageIndex < 0) {
+      setPageIndex(0);
+    }
+    // 유효 범위 내에 있으면 그대로 유지 (pageSize 변경으로 인한 totalPages 변경 시에도)
+  }, [totalPages, listMode]); // pageIndex를 dependency에서 제거하여 무한 루프 방지
 
+  // 백엔드에서 이미 페이지네이션된 데이터를 받아오므로,
+  // items는 이미 현재 페이지의 데이터만 포함함
+  // 따라서 pageItems는 filtered를 그대로 사용 (로컬 필터링만 적용된 현재 페이지 데이터)
   const pageItems = useMemo(() => {
     if (listMode === "virtual") return filtered;
-    const start = pageIndex * pageSize;
-    const end = start + pageSize;
-    return filtered.slice(start, end);
-  }, [filtered, listMode, pageIndex, pageSize]);
+    // 백엔드에서 이미 페이지네이션된 데이터를 받아오므로 slice 불필요
+    return filtered;
+  }, [filtered, listMode]);
 
   // selection 유지/초기화
   const selectionFrozen = isOverlayOpen || isBusy || lockState.kind === "locking";
@@ -738,25 +848,123 @@ export function useReviewerDeskController(options: UseReviewerDeskControllerOpti
   }, [filtered, selectionFrozen]);
 
   // paged 모드에서 선택 항목이 페이지 밖이면 페이지 이동
+  // 단, 사용자가 직접 페이지를 변경한 직후에는 실행하지 않음 (무한 루프 방지)
   useEffect(() => {
     if (listMode === "virtual") return;
     if (!selectedId) return;
+    
+    // 사용자가 직접 페이지를 변경한 직후에는 자동 페이지 이동 스킵
+    if (isUserPageChangeRef.current) {
+      isUserPageChangeRef.current = false; // 플래그 리셋
+      return;
+    }
+    
     const idx = filtered.findIndex((f) => f.id === selectedId);
     if (idx < 0) return;
     const nextPage = Math.floor(idx / pageSize);
-    if (nextPage !== pageIndex) setPageIndex(nextPage);
+    if (nextPage !== pageIndex) {
+      // 자동 페이지 이동 시에는 플래그를 설정하지 않음 (API 호출은 하지만 자동 이동임을 표시)
+      setPageIndex(nextPage);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedId, listMode, pageSize, filtered.length]);
+  }, [selectedId, listMode, pageSize]); // filtered.length 제거하여 API 응답으로 인한 불필요한 재실행 방지
 
   const selectedIndex = useMemo(() => {
     if (!selectedId) return -1;
     return filtered.findIndex((f) => f.id === selectedId);
   }, [filtered, selectedId]);
 
+  // 백엔드 API에서 감사 이력 조회 (selectedItem 변경 시)
+  const [auditHistoryById, setAuditHistoryById] = useState<Record<string, ReviewWorkItemExt["audit"]>>({});
+  
+  // 백엔드 API에서 상세 정보 조회 (selectedItem 변경 시) - fileUrl 등 상세 정보를 가져오기 위해
+  const [detailLoadedById, setDetailLoadedById] = useState<Record<string, boolean>>({});
+  
+  useEffect(() => {
+    if (!selectedId) return;
+    
+    const api = apiRef.current;
+    if (!api || !("getWorkItem" in api) || typeof api.getWorkItem !== "function") return;
+
+    // 이미 상세 정보를 조회한 항목이면 스킵
+    if (detailLoadedById[selectedId]) return;
+
+    void (async () => {
+      try {
+        const detail = await api.getWorkItem!(selectedId);
+        
+        // items 배열을 업데이트하여 상세 정보 반영 (fileUrl, videoUrl 등)
+        setItems((prev) =>
+          prev.map((it) => {
+            if (it.id !== selectedId) return it;
+            // 상세 정보로 병합 (기존 정보는 유지하되 상세 정보로 업데이트)
+            return { ...it, ...detail };
+          })
+        );
+        
+        setDetailLoadedById((prev) => ({
+          ...prev,
+          [selectedId]: true,
+        }));
+      } catch (err) {
+        if (import.meta.env.DEV) console.warn("[ReviewerDesk] getWorkItem failed", err);
+      }
+    })();
+  }, [selectedId, detailLoadedById]);
+
   const selectedItem = useMemo((): ReviewWorkItemExt | null => {
     if (!selectedId) return null;
-    return items.find((i) => i.id === selectedId) ?? null;
-  }, [items, selectedId]);
+    const item = items.find((i) => i.id === selectedId);
+    if (!item) return null;
+    
+    // auditHistoryById에 감사 이력이 있으면 병합
+    const auditHistory = auditHistoryById[selectedId];
+    if (auditHistory && auditHistory.length > 0) {
+      return { ...item, audit: auditHistory };
+    }
+    
+    return item;
+  }, [items, selectedId, auditHistoryById]);
+  
+  useEffect(() => {
+    if (!selectedId) return;
+    
+    const api = apiRef.current;
+    if (!api || !("getReviewHistory" in api) || typeof api.getReviewHistory !== "function") return;
+
+    // 이미 조회한 이력이 있으면 스킵
+    if (auditHistoryById[selectedId]) return;
+
+    void (async () => {
+      try {
+        const history = await api.getReviewHistory!(selectedId);
+        
+        // 백엔드 응답을 AuditEvent 배열로 변환
+        const auditEvents = history.history.map((h) => ({
+          id: `aud-${h.timestamp}-${h.eventType}`,
+          at: h.timestamp,
+          actor: h.actorName,
+          action: h.eventType as AuditAction,
+          detail: h.description || h.rejectionReason || undefined,
+        }));
+
+        setAuditHistoryById((prev) => ({
+          ...prev,
+          [selectedId]: auditEvents,
+        }));
+
+        // items의 audit 필드도 업데이트
+        setItems((prev) =>
+          prev.map((it) => {
+            if (it.id !== selectedId) return it;
+            return { ...it, audit: auditEvents };
+          })
+        );
+      } catch (err) {
+        if (import.meta.env.DEV) console.warn("[ReviewerDesk] getReviewHistory failed", err);
+      }
+    })();
+  }, [selectedId, auditHistoryById]);
 
   const busyKindForSelected = useMemo(() => {
     if (!busy.busy) return null;
@@ -771,29 +979,7 @@ export function useReviewerDeskController(options: UseReviewerDeskControllerOpti
   const canApprove = !!selectedItem && selectedItem.status === "REVIEW_PENDING";
   const canReject = !!selectedItem && selectedItem.status === "REVIEW_PENDING";
 
-  // ===== audit helpers =====
-  const appendAudit = (itemId: string, action: AuditAction, detail?: string) => {
-    const at = new Date().toISOString();
-    setItems((prev) =>
-      prev.map((it) => {
-        if (it.id !== itemId) return it;
-        return {
-          ...it,
-          audit: [
-            ...it.audit,
-            {
-              id: `aud-${Math.random().toString(36).slice(2, 10)}`,
-              at,
-              actor: action === "AUTO_CHECKED" || action === "PUBLISHED" ? "SYSTEM" : effectiveReviewerName,
-              action,
-              detail,
-            },
-          ],
-          lastUpdatedAt: at,
-        };
-      })
-    );
-  };
+  // 감사 이력은 백엔드 API에서 자동으로 관리됨
 
   // ===== lock helpers =====
   const releaseDecisionLockSafely = async () => {
@@ -815,50 +1001,22 @@ export function useReviewerDeskController(options: UseReviewerDeskControllerOpti
   };
 
   const acquireDecisionLock = async (itemId: string) => {
-    const api = apiRef.current!;
-    setLockState({ kind: "locking", itemId });
-
-    try {
-      const r = await api.acquireLock(itemId);
-      decisionLockRef.current = { itemId, lockToken: r.lockToken };
-
-      patchItemLock(itemId, {
-        owner: (r.ownerName ?? effectiveReviewerName).trim() || r.ownerId,
-        ownerId: r.ownerId,
-        ownerName: r.ownerName ?? effectiveReviewerName,
-        expiresAt: r.expiresAt,
-      });
-
-      setLockState({
-        kind: "locked",
-        itemId,
-        lockToken: r.lockToken,
-        expiresAt: r.expiresAt,
-        ownerName: r.ownerName ?? effectiveReviewerName,
-      });
-
-      return r;
-    } catch (err: unknown) {
-      if (isReviewerApiError(err) && err.status === 409) {
-        const payload = err.details as ConflictPayload | undefined;
-
-        if (payload?.code === "LOCK_CONFLICT") {
-          const cur = (payload.current ?? undefined) as Partial<ReviewWorkItemExt> | undefined;
-          const ownerName = readLockOwnerName(cur?.lock as unknown);
-          const expiresAt = readLockExpiresAt(cur?.lock as unknown);
-
-          if (cur?.lock) patchItemLock(itemId, cur.lock as WorkItemLockView);
-
-          setLockState({ kind: "blocked", itemId, ownerName, expiresAt });
-          toastStd.warn("다른 검토자가 먼저 처리 중입니다.");
-          return null;
-        }
-      }
-
-      setLockState({ kind: "idle" });
-      toastStd.err("락 확보에 실패했습니다.");
-      return null;
-    }
+    // 백엔드 API에는 lock 기능이 없으므로 바로 성공 처리
+    const fakeToken = `lock-${Date.now()}`;
+    decisionLockRef.current = { itemId, lockToken: fakeToken };
+    setLockState({
+      kind: "locked",
+      itemId,
+      lockToken: fakeToken,
+      expiresAt: new Date(Date.now() + 60000).toISOString(),
+      ownerName: effectiveReviewerName,
+    });
+    return {
+      lockToken: fakeToken,
+      expiresAt: new Date(Date.now() + 60000).toISOString(),
+      ownerId: "",
+      ownerName: effectiveReviewerName,
+    };
   };
 
   // ===== action guard =====
@@ -1123,30 +1281,13 @@ export function useReviewerDeskController(options: UseReviewerDeskControllerOpti
       const next = normalizeDecisionResult(res.item as ReviewWorkItemExt, "approve");
       patchItemInState(next);
 
-      const isFinal =
-        selectedItem.contentType !== "VIDEO"
-          ? true
-          : Boolean(selectedItem.videoUrl && selectedItem.videoUrl.trim().length > 0);
+      // reviewStage를 사용하여 1차/2차 승인 구분
+      const reviewStage = getReviewStage(selectedItem);
+      const isFinal = selectedItem.contentType !== "VIDEO"
+        ? true
+        : reviewStage === 2; // 2차 검토 단계인지 확인
 
-      if (!isHttpMode) {
-        appendAudit(
-          selectedItem.id,
-          "APPROVED",
-          selectedItem.contentType !== "VIDEO"
-            ? "승인 처리"
-            : isFinal
-              ? "2차(최종) 승인 처리"
-              : "1차(스크립트) 승인 처리"
-        );
-
-        if (isFinal) {
-          appendAudit(
-            selectedItem.id,
-            "PUBLISHED",
-            selectedItem.contentType !== "VIDEO" ? "승인 후 공개" : "2차 승인 후 공개"
-          );
-        }
-      }
+      // 감사 이력은 백엔드에서 자동으로 기록됨
 
       toastStd.ok(
         isPolicyDocItem(selectedItem)
@@ -1157,6 +1298,11 @@ export function useReviewerDeskController(options: UseReviewerDeskControllerOpti
               ? "2차(최종) 승인 완료 (공개됨)"
               : "1차 승인 완료 (비공개: 제작자가 영상 생성 가능)"
       );
+
+      // 승인 성공 후 목록 갱신 (optimistic update로 즉시 제거)
+      setItems((prev) => prev.filter((it) => it.id !== selectedItem.id));
+      // 백엔드에서 최신 상태로 재조회
+      await refreshAllFromApi({ silent: true, force: true });
 
       setDecisionModal({ open: false, kind: null });
       decisionCtxRef.current = null;
@@ -1175,17 +1321,6 @@ export function useReviewerDeskController(options: UseReviewerDeskControllerOpti
 
         setDecisionModal({ open: false, kind: null });
         decisionCtxRef.current = null;
-        return;
-      }
-
-      const m = extractApiErrorMessage(err);
-
-      // mock 모드: policyStore 연동 문서 미존재로 실패하는 경우 UI 실패 방지
-      if (!isHttpMode && isMissingLinkedDocMessage(m)) {
-        toastStd.warn("연결된 문서를 찾지 못해 연동 반영은 생략했습니다. (Mock)");
-        setDecisionModal({ open: false, kind: null });
-        decisionCtxRef.current = null;
-        await refreshAllFromApi({ silent: true, force: true });
         return;
       }
 
@@ -1239,9 +1374,15 @@ export function useReviewerDeskController(options: UseReviewerDeskControllerOpti
       const next = normalizeDecisionResult(res.item as ReviewWorkItemExt, "reject", trimmed);
       patchItemInState(next);
 
-      if (!isHttpMode) appendAudit(selectedItem.id, "REJECTED", trimmed);
+      // 감사 이력은 백엔드에서 자동으로 기록됨
 
       toastStd.ok(isPolicyDocItem(selectedItem) ? "사규/정책 반려 완료" : "반려 완료");
+      
+      // 반려 성공 후 목록 갱신 (optimistic update로 즉시 제거)
+      setItems((prev) => prev.filter((it) => it.id !== selectedItem.id));
+      // 백엔드에서 최신 상태로 재조회
+      await refreshAllFromApi({ silent: true, force: true });
+
       setDecisionModal({ open: false, kind: null });
       decisionCtxRef.current = null;
     } catch (err: unknown) {
@@ -1259,17 +1400,6 @@ export function useReviewerDeskController(options: UseReviewerDeskControllerOpti
 
         setDecisionModal({ open: false, kind: null });
         decisionCtxRef.current = null;
-        return;
-      }
-
-      const m = extractApiErrorMessage(err);
-
-      // mock 모드: policyStore 연동 문서 미존재로 실패하는 경우 UI 실패 방지
-      if (!isHttpMode && isMissingLinkedDocMessage(m)) {
-        toastStd.warn("연결된 문서를 찾지 못해 연동 반영은 생략했습니다. (Mock)");
-        setDecisionModal({ open: false, kind: null });
-        decisionCtxRef.current = null;
-        await refreshAllFromApi({ silent: true, force: true });
         return;
       }
 
@@ -1293,54 +1423,8 @@ export function useReviewerDeskController(options: UseReviewerDeskControllerOpti
     if (!selectedItem) return;
     const note = (notesById[selectedItem.id] ?? "").trim();
     if (!note) return;
-    appendAudit(selectedItem.id, "COMMENTED", note);
-    toastStd.ok("메모가 감사 이력에 저장되었습니다.");
-  };
-
-  // ===== DEV: 대량 데이터 + 충돌 시뮬레이션 =====
-  const devEnabled = import.meta.env.DEV;
-
-  const toggleDataset = () => {
-    if (!devEnabled) return;
-    if (isBusy || isOverlayOpen || lockState.kind === "locking") return;
-    if (isHttpMode) {
-      toastStd.warn("http 모드에서는 로컬 데이터셋 전환이 비활성화됩니다.");
-      return;
-    }
-
-    setDatasetKey((prev) => {
-      const next = prev === "base" ? "load" : "base";
-      toastStd.ok(next === "load" ? "대량 데이터 로드" : "기본 데이터 로드");
-      return next;
-    });
-  };
-
-  const simulateConflict = () => {
-    if (!devEnabled) return;
-    if (!selectedId) return;
-    if (isBusy || isOverlayOpen || lockState.kind === "locking") return;
-    if (isHttpMode) {
-      toastStd.warn("http 모드에서는 충돌 시뮬레이션이 비활성화됩니다.");
-      return;
-    }
-
-    const modes: Array<Parameters<typeof mutateMockForConflict>[2]> = [
-      "version_bump",
-      "already_approved",
-      "already_rejected",
-    ];
-    const mode = modes[Math.floor(Math.random() * modes.length)];
-
-    setItems((prev) => {
-      const next = mutateMockForConflict(prev as ReviewWorkItem[], selectedId, mode) as ReviewWorkItemExt[];
-      apiRef.current = createReviewerApiMock({
-        initialItems: next,
-        me: { id: effectiveReviewerName, name: effectiveReviewerName },
-      });
-      return next;
-    });
-
-    toastStd.warn(`충돌 시뮬레이션 적용: ${mode.replace("_", " ")}`);
+    // 메모 저장은 백엔드 API를 통해 처리되어야 함 (현재는 UI만 제공)
+    toastStd.ok("메모 저장 기능은 백엔드 API 연동 후 사용 가능합니다.");
   };
 
   return {
@@ -1415,12 +1499,5 @@ export function useReviewerDeskController(options: UseReviewerDeskControllerOpti
     lastRefreshedAtLabel,
 
     ui: { statusLabel, statusTone, categoryLabel, piiTone, isRiskItem },
-
-    devtools: {
-      enabled: devEnabled,
-      datasetLabel: datasetKey === "load" ? "대량 데이터" : "기본 데이터",
-      toggleDataset,
-      simulateConflict,
-    },
   };
 }

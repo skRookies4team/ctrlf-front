@@ -481,6 +481,7 @@ export type EducationVideoItem = {
 
   totalWatchSeconds?: number;
   watchStatus?: string;
+  departmentScope?: string[]; // JSON string으로 올 수 있음 (스펙: docs/education_api_spec.md 2.1)
 };
 
 export type EduProgressPayload = {
@@ -595,7 +596,27 @@ function normalizeVideoRecord(
         ? it.status
         : undefined;
 
-  return {
+  // departmentScope는 JSON string으로 올 수 있음 (스펙: docs/education_api_spec.md 2.1)
+  const deptScopeRaw = it.departmentScope;
+  let departmentScope: string[] | undefined;
+  
+  if (typeof deptScopeRaw === "string" && deptScopeRaw.trim()) {
+    // JSON string인 경우 파싱
+    try {
+      const parsed = JSON.parse(deptScopeRaw);
+      departmentScope = Array.isArray(parsed) 
+        ? parsed.filter(x => typeof x === "string")
+        : undefined;
+    } catch {
+      // 파싱 실패 시 undefined
+      departmentScope = undefined;
+    }
+  } else if (Array.isArray(deptScopeRaw)) {
+    // 이미 배열인 경우 (호환성)
+    departmentScope = deptScopeRaw.filter(x => typeof x === "string");
+  }
+
+  const result: EducationVideoItem = {
     id,
     title,
     fileUrl,
@@ -606,6 +627,12 @@ function normalizeVideoRecord(
     totalWatchSeconds,
     watchStatus,
   };
+  
+  if (departmentScope !== undefined) {
+    result.departmentScope = departmentScope;
+  }
+  
+  return result;
 }
 
 function buildEduQuery(params?: {
@@ -820,7 +847,6 @@ export type QuizAvailableEducation = {
   title: string;
   category?: string | null;
   eduType?: string | null;
-  educationStatus?: string | null;
   attemptCount: number;
   maxAttempts: number | null;
   hasAttempted: boolean;
@@ -852,10 +878,10 @@ export type QuizStartResponse = {
 };
 
 export type QuizTimerResponse = {
-  timeLimit: number; // 문서상 null 가능하지만, 기존 UI 호환 위해 0으로 정규화
+  timeLimit: number | null; // null = 제한 없음
   startedAt: string;
-  expiresAt: string; // 문서상 null 가능하지만, 기존 UI 호환 위해 ""로 정규화
-  remainingSeconds: number; // 문서상 null 가능하지만, 기존 UI 호환 위해 0으로 정규화
+  expiresAt: string | null; // null = 제한 없음
+  remainingSeconds: number | null; // null = 제한 없음 또는 만료
   isExpired: boolean;
 };
 
@@ -1114,15 +1140,12 @@ export async function getQuizAvailableEducations(
             : null;
 
       const eduType = typeof it.eduType === "string" ? it.eduType : null;
-      const educationStatus =
-        typeof it.educationStatus === "string" ? it.educationStatus : null;
 
       return {
         educationId,
         title,
         category,
         eduType,
-        educationStatus,
         attemptCount,
         maxAttempts: maxAttempts ?? null,
         hasAttempted,
@@ -1257,11 +1280,11 @@ export async function getQuizTimer(
   if (!dto)
     throw new Error("[EDU_API] getQuizTimer: 응답 형식이 올바르지 않습니다.");
 
-  // 문서상 null 가능 → 기존 UI 호환 위해 0/""로 정규화
-  const timeLimit = toNumOrNull(dto.timeLimit) ?? 0;
+  // 문서상 null 가능 → null 유지 (제한 없음을 표현)
+  const timeLimit = toNumOrNull(dto.timeLimit);
   const startedAt = typeof dto.startedAt === "string" ? dto.startedAt : "";
-  const expiresAt = typeof dto.expiresAt === "string" ? dto.expiresAt : "";
-  const remainingSeconds = toNumOrNull(dto.remainingSeconds) ?? 0;
+  const expiresAt = typeof dto.expiresAt === "string" ? dto.expiresAt : null;
+  const remainingSeconds = toNumOrNull(dto.remainingSeconds);
   const isExpired = (toBoolOrNull(dto.isExpired) ?? false) as boolean;
 
   return { timeLimit, startedAt, expiresAt, remainingSeconds, isExpired };

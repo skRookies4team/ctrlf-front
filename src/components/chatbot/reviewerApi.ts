@@ -9,12 +9,10 @@ import type {
   ReleaseLockResponse,
 } from "./reviewerApiTypes";
 import { reviewerApiHttp } from "./reviewerApiHttp";
-import { createReviewerApiMock } from "./reviewerApiMock";
 
 /**
- * 실무 포인트:
- * - "컨트롤러는 api 구현체를 모르면 된다"
- * - env로 http/mock 스위치 가능
+ * Reviewer API 인터페이스
+ * 백엔드 API와 연동하여 검토 데스크 기능을 제공
  */
 
 export interface ReviewerApi {
@@ -24,14 +22,9 @@ export interface ReviewerApi {
   releaseLock(id: string, lockToken: string): Promise<ReleaseLockResponse>;
   approve(id: string, req: DecisionRequest): Promise<DecisionResponse>;
   reject(id: string, req: DecisionRequest): Promise<DecisionResponse>;
-}
-
-type ApiMode = "mock" | "http";
-
-function getEnvString(key: string): string | undefined {
-  const env = import.meta.env as unknown as Record<string, unknown>;
-  const v = env[key];
-  return typeof v === "string" ? v : undefined;
+  // 백엔드 API 추가 메서드
+  getReviewStats?(): Promise<import("./reviewerApiTypes").ReviewStatsResponse>;
+  getReviewHistory?(videoId: string): Promise<import("./reviewerApiTypes").ReviewHistoryResponse>;
 }
 
 let singleton: ReviewerApi | null = null;
@@ -39,18 +32,7 @@ let singleton: ReviewerApi | null = null;
 export function getReviewerApi(): ReviewerApi {
   if (singleton) return singleton;
 
-  const raw = getEnvString("VITE_REVIEWER_API_MODE");
-  const mode: ApiMode = raw === "http" ? "http" : "mock";
-
-  if (mode === "http") {
-    singleton = reviewerApiHttp as ReviewerApi;
-    return singleton;
-  }
-
-  singleton = createReviewerApiMock({
-    initialItems: [],
-    me: { id: "me", name: "나(로컬)" },
-  });
-
+  // 항상 HTTP 모드 사용 (백엔드 API 연동)
+  singleton = reviewerApiHttp as ReviewerApi;
   return singleton;
 }

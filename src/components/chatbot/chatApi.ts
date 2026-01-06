@@ -323,6 +323,16 @@ function getServiceDomainFromKeycloak(): ChatServiceDomain | null {
   return normalizeServiceDomain(parsed["domain"]);
 }
 
+/**
+ * Keycloak tokenParsed.department → 사용자 부서 정보
+ */
+function getDepartmentFromKeycloak(): string | null {
+  const parsed = keycloak?.tokenParsed as unknown;
+  if (!isRecord(parsed)) return null;
+  const dept = parsed["department"];
+  return typeof dept === "string" && dept.trim() ? dept.trim() : null;
+}
+
 async function fetchWithTimeout(
   input: RequestInfo | URL,
   init: RequestInit,
@@ -375,8 +385,7 @@ export async function renameChatSession(
 
   const text = await res.text().catch(() => "");
   throw new Error(
-    `renameChatSession failed: ${res.status} ${res.statusText}${
-      text ? ` - ${text}` : ""
+    `renameChatSession failed: ${res.status} ${res.statusText}${text ? ` - ${text}` : ""
     }`
   );
 }
@@ -405,8 +414,7 @@ export async function deleteChatSession(sessionId: string): Promise<void> {
 
   const text = await res.text().catch(() => "");
   throw new Error(
-    `deleteChatSession failed: ${res.status} ${res.statusText}${
-      text ? ` - ${text}` : ""
+    `deleteChatSession failed: ${res.status} ${res.statusText}${text ? ` - ${text}` : ""
     }`
   );
 }
@@ -485,6 +493,7 @@ type ChatSessionCreateRequest = {
   userUuid: string;
   title: string;
   domain: string;
+  department?: string | null;
 };
 
 /**
@@ -512,6 +521,7 @@ type ChatMessageSendRequest = {
    * - null/undefined: 기본값(openai) 사용
    */
   model?: string | null;
+  department?: string | null;
 };
 
 /**
@@ -534,6 +544,64 @@ type UpstreamChatFeedbackRequest = {
   comment?: string;
 };
 
+/**
+ * 세션 목록 조회 (GET /api/chat/sessions)
+ * - 스펙: GET /api/chat/sessions
+ * - Response: 배열 형태의 세션 목록
+ */
+export async function getChatSessions(): Promise<ChatSessionResponse[]> {
+  const token = await ensureFreshToken();
+  if (!token) {
+    throw new Error("Not authenticated: Keycloak token is missing.");
+  }
+
+  const res = await fetchWithTimeout(
+    CHAT_SESSIONS_ENDPOINT,
+    {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+    },
+    DEFAULT_TIMEOUT_MS
+  );
+
+  if (!res.ok) {
+    const bodyText = await res.text().catch(() => "");
+    throw new Error(
+      `Get sessions failed: ${res.status} ${res.statusText}${bodyText ? ` - ${bodyText}` : ""
+      }`
+    );
+  }
+
+  const data: unknown = await res.json().catch(() => null);
+
+  // 배열 형태 응답 처리
+  if (Array.isArray(data)) {
+    return data.filter(
+      (item): item is ChatSessionResponse =>
+        isRecord(item) && nonEmptyString(item["id"]) !== null
+    ) as ChatSessionResponse[];
+  }
+
+  // 객체 형태 응답에서 배열 추출 (방어적 처리)
+  if (isRecord(data)) {
+    const candidates = ["items", "data", "sessions", "content", "result"];
+    for (const key of candidates) {
+      const value = data[key];
+      if (Array.isArray(value)) {
+        return value.filter(
+          (item): item is ChatSessionResponse =>
+            isRecord(item) && nonEmptyString(item["id"]) !== null
+        ) as ChatSessionResponse[];
+      }
+    }
+  }
+
+  return [];
+}
+
 async function createChatSession(
   payload: ChatSessionCreateRequest,
   token: string
@@ -555,8 +623,7 @@ async function createChatSession(
   if (!res.ok) {
     const bodyText = await res.text().catch(() => "");
     throw new Error(
-      `Create session failed: ${res.status} ${res.statusText}${
-        bodyText ? ` - ${bodyText}` : ""
+      `Create session failed: ${res.status} ${res.statusText}${bodyText ? ` - ${bodyText}` : ""
       }`
     );
   }
@@ -590,8 +657,7 @@ async function sendChatMessage(
   if (!res.ok) {
     const bodyText = await res.text().catch(() => "");
     throw new Error(
-      `Send message failed: ${res.status} ${res.statusText}${
-        bodyText ? ` - ${bodyText}` : ""
+      `Send message failed: ${res.status} ${res.statusText}${bodyText ? ` - ${bodyText}` : ""
       }`
     );
   }
@@ -640,8 +706,13 @@ async function sendChatMessage(
           typeof actionData["resume_position_seconds"] === "number"
             ? actionData["resume_position_seconds"]
             : typeof actionData["resumePositionSeconds"] === "number"
+<<<<<<< HEAD
             ? actionData["resumePositionSeconds"]
             : undefined,
+=======
+              ? actionData["resumePositionSeconds"]
+              : undefined,
+>>>>>>> main
         educationTitle:
           nonEmptyString(actionData["education_title"]) ??
           nonEmptyString(actionData["educationTitle"]) ??
@@ -654,8 +725,13 @@ async function sendChatMessage(
           typeof actionData["progress_percent"] === "number"
             ? actionData["progress_percent"]
             : typeof actionData["progressPercent"] === "number"
+<<<<<<< HEAD
             ? actionData["progressPercent"]
             : undefined,
+=======
+              ? actionData["progressPercent"]
+              : undefined,
+>>>>>>> main
       };
     }
   }
@@ -705,11 +781,13 @@ export async function sendChatToAI(req: ChatRequest): Promise<ChatSendResult> {
 
   if (!serverSessionId) {
     const title = makeSessionTitleFromUserText(lastUser);
+    const department = getDepartmentFromKeycloak();
     const created = await createChatSession(
       {
         userUuid,
         title,
         domain: String(serviceDomain),
+        department: department ?? undefined,
       },
       token
     );
@@ -720,12 +798,14 @@ export async function sendChatToAI(req: ChatRequest): Promise<ChatSendResult> {
 
   // A/B 테스트: req.model 추출
   const abModel = (req as unknown as { model?: string | null }).model ?? null;
+  const department = getDepartmentFromKeycloak();
 
   const sent = await sendChatMessage(
     {
       sessionId: serverSessionId,
       content: lastUser,
       model: abModel,
+      department: department ?? undefined,
     },
     token
   );
@@ -807,9 +887,7 @@ export async function retryMessage(
   messageId: string
 ): Promise<ChatSendResult> {
   const token = await ensureFreshToken();
-  if (!token) {
-    throw new Error("Not authenticated: Keycloak token is missing.");
-  }
+  if (!token) throw new Error("Not authenticated: Keycloak token is missing.");
 
   if (!isUuidLike(sessionId) || !isUuidLike(messageId)) {
     throw new Error("Retry failed: sessionId/messageId must be UUID.");
@@ -827,36 +905,109 @@ export async function retryMessage(
     DEFAULT_TIMEOUT_MS
   );
 
+  // 에러면 텍스트 그대로 포함
   if (!res.ok) {
     const bodyText = await res.text().catch(() => "");
     throw new Error(
-      `Retry failed: ${res.status} ${res.statusText}${
-        bodyText ? ` - ${bodyText}` : ""
+      `Retry failed: ${res.status} ${res.statusText}${bodyText ? ` - ${bodyText}` : ""
       }`
     );
   }
 
-  const data: unknown = await res.json().catch(() => null);
-  if (
-    isRecord(data) &&
-    nonEmptyString(data["content"]) &&
-    nonEmptyString(data["messageId"])
-  ) {
+  // (중요) 바디는 1번만 읽는다
+  const rawText = await res.text().catch(() => "");
+  const contentType = (res.headers.get("content-type") ?? "").toLowerCase();
+
+  // JSON 가능성이 있으면 파싱 시도 (content-type이 json이거나, 본문이 { 로 시작하는 경우)
+  let parsed: unknown = null;
+  const looksJson =
+    contentType.includes("application/json") || rawText.trim().startsWith("{");
+
+  if (looksJson && rawText.trim()) {
+    try {
+      parsed = JSON.parse(rawText) as unknown;
+    } catch {
+      parsed = null;
+    }
+  }
+
+  // JSON 응답 케이스: id/messageId 모두 허용 + content 추출
+  if (isRecord(parsed)) {
+    const returnedSessionId =
+      nonEmptyString(parsed["sessionId"]) ??
+      nonEmptyString(parsed["session_id"]) ??
+      null;
+
+    const returnedMessageId =
+      nonEmptyString(parsed["messageId"]) ??
+      nonEmptyString(parsed["message_id"]) ??
+      nonEmptyString(parsed["id"]) ?? // <-- 네 백엔드 응답은 여기로 들어옴
+      null;
+
+    const extractedContent = extractTextLikeContent(parsed) ?? "";
+
+    const createdAt =
+      nonEmptyString(parsed["createdAt"]) ??
+      nonEmptyString(parsed["created_at"]) ??
+      new Date().toISOString();
+
+    // AI 응답의 meta.action 또는 action 필드에서 액션 정보 추출 (일반 메시지와 동일)
+    let action: ChatAction | undefined;
+    const metaObj = parsed["meta"];
+    const actionData = isRecord(metaObj)
+      ? metaObj["action"]
+      : parsed["action"];
+
+    if (isRecord(actionData) && typeof actionData["type"] === "string") {
+      action = {
+        type: actionData["type"] as ChatAction["type"],
+        educationId:
+          nonEmptyString(actionData["education_id"]) ??
+          nonEmptyString(actionData["educationId"]) ??
+          undefined,
+        videoId:
+          nonEmptyString(actionData["video_id"]) ??
+          nonEmptyString(actionData["videoId"]) ??
+          undefined,
+        resumePositionSeconds:
+          typeof actionData["resume_position_seconds"] === "number"
+            ? actionData["resume_position_seconds"]
+            : typeof actionData["resumePositionSeconds"] === "number"
+              ? actionData["resumePositionSeconds"]
+              : undefined,
+        educationTitle:
+          nonEmptyString(actionData["education_title"]) ??
+          nonEmptyString(actionData["educationTitle"]) ??
+          undefined,
+        videoTitle:
+          nonEmptyString(actionData["video_title"]) ??
+          nonEmptyString(actionData["videoTitle"]) ??
+          undefined,
+        progressPercent:
+          typeof actionData["progress_percent"] === "number"
+            ? actionData["progress_percent"]
+            : typeof actionData["progressPercent"] === "number"
+              ? actionData["progressPercent"]
+              : undefined,
+      };
+    }
+
     return {
-      sessionId,
-      messageId: String(data["messageId"]),
+      sessionId: returnedSessionId ?? sessionId,
+      messageId: returnedMessageId ?? messageId,
       role: "assistant",
-      content: String(data["content"]),
-      createdAt: nonEmptyString(data["createdAt"]) ?? new Date().toISOString(),
+      content: extractedContent.trim() ? extractedContent : "응답이 비어 있습니다.",
+      createdAt,
+      action,
     };
   }
 
-  const text = await res.text().catch(() => "");
+  // 텍스트 응답 케이스(JSON 파싱 실패 or text/plain)
   return {
     sessionId,
     messageId,
     role: "assistant",
-    content: text || "응답이 비어 있습니다.",
+    content: rawText.trim() ? rawText : "응답이 비어 있습니다.",
     createdAt: new Date().toISOString(),
   };
 }
@@ -977,30 +1128,51 @@ async function fetchFaqJson(
   token: string,
   timeoutMs = 15_000
 ): Promise<unknown> {
-  const res = await fetchWithTimeout(
-    url,
-    {
-      method: "GET",
-      headers: {
-        Accept: "application/json",
-        Authorization: `Bearer ${token}`,
+  console.log(`[FAQ API] fetchFaqJson 호출:`, { url, timeoutMs, hasToken: !!token });
+  try {
+    const res = await fetchWithTimeout(
+      url,
+      {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${token}`,
+        },
       },
-    },
-    timeoutMs
-  );
-
-  if (!res.ok) {
-    const bodyText = await res.text().catch(() => "");
-    throw new Error(
-      `GET ${url} failed: ${res.status} ${res.statusText}${
-        bodyText ? ` - ${bodyText}` : ""
-      }`
+      timeoutMs
     );
-  }
 
-  const data = (await res.json().catch(() => null)) as unknown;
-  if (data === null) throw new Error(`GET ${url} failed: invalid JSON`);
-  return data;
+    console.log(`[FAQ API] 응답 상태:`, { 
+      url, 
+      status: res.status, 
+      statusText: res.statusText,
+      ok: res.ok 
+    });
+
+    if (!res.ok) {
+      const bodyText = await res.text().catch(() => "");
+      console.error(`[FAQ API] 요청 실패:`, { 
+        url, 
+        status: res.status, 
+        statusText: res.statusText,
+        body: bodyText 
+      });
+      throw new Error(
+        `GET ${url} failed: ${res.status} ${res.statusText}${bodyText ? ` - ${bodyText}` : ""}`
+      );
+    }
+
+    const data = (await res.json().catch(() => null)) as unknown;
+    if (data === null) {
+      console.error(`[FAQ API] JSON 파싱 실패:`, { url });
+      throw new Error(`GET ${url} failed: invalid JSON`);
+    }
+    console.log(`[FAQ API] 응답 데이터:`, { url, dataType: Array.isArray(data) ? 'array' : typeof data, dataLength: Array.isArray(data) ? data.length : 'N/A' });
+    return data;
+  } catch (error) {
+    console.error(`[FAQ API] fetchFaqJson 에러:`, { url, error });
+    throw error;
+  }
 }
 
 /** FAQ Home */
@@ -1042,6 +1214,7 @@ export async function fetchFaqList(domain: ChatServiceDomain): Promise<FaqItem[]
     cached.items.length > 0 &&
     now - cached.fetchedAt < FAQ_CACHE_TTL_MS
   ) {
+    console.log(`[FAQ API] 캐시에서 반환 (${key}):`, cached.items.length, "개");
     return cached.items;
   }
 
@@ -1051,14 +1224,21 @@ export async function fetchFaqList(domain: ChatServiceDomain): Promise<FaqItem[]
   const url = `${FAQ_LIST_ENDPOINT}?domain=${encodeURIComponent(
     String(domain).toUpperCase()
   )}`;
+  console.log(`[FAQ API] 요청 URL (${key}):`, url);
+  
   const raw = await fetchFaqJson(url, token, 15_000);
+  console.log(`[FAQ API] 원본 응답 (${key}):`, raw);
+  
   const items = normalizeFaqItems(raw);
+  console.log(`[FAQ API] 정규화된 FAQ (${key}):`, items.length, "개", items);
 
   // 빈 배열 고착 방지: items가 있을 때만 캐시
   if (items.length > 0) {
     faqListCache.set(key, { items, fetchedAt: now });
+    console.log(`[FAQ API] 캐시 저장 (${key}):`, items.length, "개");
   } else {
     faqListCache.delete(key);
+    console.warn(`[FAQ API] ⚠️ 도메인 ${key}에 대한 FAQ가 0개입니다.`);
   }
 
   return items;
@@ -1200,8 +1380,7 @@ async function streamMessageByIdSSE(
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     throw new Error(
-      `SSE GET ${url} failed: ${res.status} ${res.statusText}${
-        body ? ` - ${body}` : ""
+      `SSE GET ${url} failed: ${res.status} ${res.statusText}${body ? ` - ${body}` : ""
       }`
     );
   }
@@ -1452,9 +1631,10 @@ export async function sendChatToAIStream(
     const uiDomain = pickUiDomain(req) ?? "general";
     const tokenDomain = getServiceDomainFromKeycloak();
     const serviceDomain = toChatServiceDomain(uiDomain, tokenDomain ?? "POLICY");
+    const department = getDepartmentFromKeycloak();
 
     const created = await createChatSession(
-      { userUuid, title, domain: String(serviceDomain) },
+      { userUuid, title, domain: String(serviceDomain), department: department ?? undefined },
       token
     );
     serverSessionId = created.id;
@@ -1463,6 +1643,7 @@ export async function sendChatToAIStream(
 
   // A/B 테스트: req.model 추출
   const abModel = (req as unknown as { model?: string | null }).model ?? null;
+  const department = getDepartmentFromKeycloak();
 
   // 2) 먼저 POST /chat/messages 로 messageId 확보
   const sent = await sendChatMessage(
@@ -1470,6 +1651,7 @@ export async function sendChatToAIStream(
       sessionId: serverSessionId,
       content: lastUser,
       model: abModel,
+      department: department ?? undefined,
     },
     token
   );
@@ -1500,6 +1682,56 @@ export async function sendChatToAIStream(
     role: "assistant",
     content: streamed || sent.content || "응답이 비어 있습니다.",
     createdAt: sent.createdAt || new Date().toISOString(),
+  };
+
+  handlers.onFinal?.(final);
+  return final;
+}
+
+/**
+ * 재시도 메시지 스트리밍 (일반 메시지와 동일한 스트리밍 방식)
+ * - retryMessage를 호출하여 messageId를 얻고, 그 messageId로 스트리밍을 시작
+ * - 서버가 스트림을 못 주면 retryMessage의 응답을 fallback으로 사용
+ */
+export async function retryMessageStream(
+  sessionId: string,
+  messageId: string,
+  handlers: ChatStreamHandlers
+): Promise<ChatSendResult> {
+  const token = await ensureFreshToken();
+  if (!token) throw new Error("Not authenticated: Keycloak token is missing.");
+
+  if (!isUuidLike(sessionId) || !isUuidLike(messageId)) {
+    throw new Error("Retry failed: sessionId/messageId must be UUID.");
+  }
+
+  // 1) 먼저 retryMessage를 호출하여 새 messageId 확보
+  const retryResult = await retryMessage(sessionId, messageId);
+  const newMessageId = retryResult.messageId;
+
+  // 2) 새 messageId로 스트리밍 시작
+  let streamed = "";
+  try {
+    const r = await streamMessageByIdSSE(newMessageId, token, handlers.onDelta);
+    streamed = r.content;
+  } catch (err: unknown) {
+    console.warn(
+      "[chatApi] retryMessageStream SSE failed; falling back to non-stream response",
+      err
+    );
+    // SSE가 실패하거나 서버가 스트림을 안 주는 경우: UX를 위해 최소 1회 델타로라도 반영
+    const fallback = retryResult.content || "응답이 비어 있습니다.";
+    handlers.onDelta(fallback);
+    streamed = fallback;
+  }
+
+  const final: ChatSendResult = {
+    sessionId: retryResult.sessionId ?? sessionId,
+    messageId: newMessageId,
+    role: "assistant",
+    content: streamed || retryResult.content || "응답이 비어 있습니다.",
+    createdAt: retryResult.createdAt || new Date().toISOString(),
+    action: retryResult.action,
   };
 
   handlers.onFinal?.(final);

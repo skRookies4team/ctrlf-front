@@ -5,7 +5,6 @@ import "./chatbot.css";
 import { computePanelPosition, type Anchor, type PanelSize } from "../../utils/chat";
 import type { QuizCourse, QuizQuestion, WrongAnswerEntry } from "./quizData";
 import {
-  normalizeUnlockedFromStatus,
   formatScore,
   scoreToPercent,
   QUIZ_ATTEMPT_FALLBACK,
@@ -386,8 +385,8 @@ function toUiCourses(raw: Awaited<ReturnType<typeof getQuizAvailableEducations>>
     title: r.title,
     category: r.category ?? null,
     eduType: r.eduType ?? null,
-    educationStatus: r.educationStatus ?? null,
-    unlocked: normalizeUnlockedFromStatus(r.educationStatus),
+    // 스펙에 따르면 available-educations는 이미 이수 완료한 교육만 반환하므로 unlocked는 항상 true
+    unlocked: true,
     attemptCount: r.attemptCount ?? 0,
     maxAttempts: r.maxAttempts ?? null,
     hasAttempted: Boolean(r.hasAttempted),
@@ -1626,9 +1625,13 @@ const QuizPanel: React.FC<QuizPanelProps> = ({
       try {
         const t = await raceUiTimeout("타이머 조회", getQuizTimer(solve.attemptId), 5_000);
 
-        setTimeLimit(t.timeLimit);
+        // null = 제한 없음이므로 0으로 처리 (UI 호환)
+        setTimeLimit(t.timeLimit ?? 0);
         setServerExpired(t.isExpired);
-        setRemainingSeconds((prev) => (Math.abs(prev - t.remainingSeconds) >= 2 ? t.remainingSeconds : prev));
+        setRemainingSeconds((prev) => {
+          const newRemaining = t.remainingSeconds ?? 0;
+          return Math.abs(prev - newRemaining) >= 2 ? newRemaining : prev;
+        });
       } catch {
         // ignore
       } finally {
@@ -1990,8 +1993,9 @@ const QuizPanel: React.FC<QuizPanelProps> = ({
 
       try {
         const t = await raceUiTimeout("타이머 조회", getQuizTimer(started.attemptId), 6_000);
-        setTimeLimit(t.timeLimit);
-        setRemainingSeconds(t.remainingSeconds);
+        // null = 제한 없음이므로 0으로 처리 (UI 호환)
+        setTimeLimit(t.timeLimit ?? 0);
+        setRemainingSeconds(t.remainingSeconds ?? 0);
         setServerExpired(t.isExpired);
       } catch {
         setTimeLimit(20 * 60);
