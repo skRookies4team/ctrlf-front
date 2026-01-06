@@ -706,13 +706,8 @@ async function sendChatMessage(
           typeof actionData["resume_position_seconds"] === "number"
             ? actionData["resume_position_seconds"]
             : typeof actionData["resumePositionSeconds"] === "number"
-<<<<<<< HEAD
-            ? actionData["resumePositionSeconds"]
-            : undefined,
-=======
               ? actionData["resumePositionSeconds"]
               : undefined,
->>>>>>> main
         educationTitle:
           nonEmptyString(actionData["education_title"]) ??
           nonEmptyString(actionData["educationTitle"]) ??
@@ -725,13 +720,8 @@ async function sendChatMessage(
           typeof actionData["progress_percent"] === "number"
             ? actionData["progress_percent"]
             : typeof actionData["progressPercent"] === "number"
-<<<<<<< HEAD
-            ? actionData["progressPercent"]
-            : undefined,
-=======
               ? actionData["progressPercent"]
               : undefined,
->>>>>>> main
       };
     }
   }
