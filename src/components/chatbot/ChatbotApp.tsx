@@ -9,6 +9,7 @@ import {
   sendChatToAIStream,
   sendFeedbackToAI,
   retryMessage,
+  retryMessageStream,
   fetchFaqHome,
   fetchFaqList,
   submitReportToServer,
@@ -27,6 +28,7 @@ import {
   type FaqHomeItem,
   type FaqItem,
   type ChatSendResult,
+  type PlayEducationVideoParams,
   fromChatServiceDomain,
   normalizeServiceDomain,
 } from "../../types/chat";
@@ -38,6 +40,9 @@ import {
   type PanelSize,
 } from "../../utils/chat";
 import { can, type UserRole } from "../../auth/roles";
+
+// Re-export for backwards compatibility
+export type { PlayEducationVideoParams } from "../../types/chat";
 
 interface ChatbotAppProps {
   onClose: () => void;
@@ -51,6 +56,8 @@ interface ChatbotAppProps {
   onRequestFocus?: () => void;
   onOpenReviewerPanel?: () => void;
   onOpenCreatorPanel?: () => void;
+  /** AI 응답에서 영상 재생 액션이 감지되었을 때 호출 */
+  onPlayEducationVideo?: (params: PlayEducationVideoParams) => void;
 }
 
 type Size = PanelSize;
@@ -379,6 +386,54 @@ async function fetchServerSessionHistory(serverSessionId: string): Promise<{
       updatedAt: Date.now(),
     };
 
+  // 스펙 엔드포인트 시도: GET /api/chat/sessions/{sessionId}/history
+  // 스펙 응답: { sessionId, title, messages: [...] }
+  const historyUrl = `/api/chat/sessions/${encodeURIComponent(serverSessionId)}/history`;
+  const historyResponse = await apiFetchJson<{
+    sessionId?: string;
+    title?: string;
+    messages?: ServerHistoryMessage[];
+  }>(historyUrl, { method: "GET" });
+
+  if (historyResponse.ok && historyResponse.data) {
+    const historyData = historyResponse.data;
+    const messages = pickMessagesArray(historyData);
+    
+    if (messages.length > 0) {
+      const now = Date.now();
+      const normalized = messages
+        .filter((m) => trimStr((m.content ?? m.text)?.toString()).length > 0)
+        .map((m, idx) => {
+          const role = normalizeRole(m.role ?? m.sender);
+          const content = trimStr(m.content ?? m.text ?? "");
+          const created = toEpochMs(m.createdAt ?? m.created_at ?? m.timestamp, now + idx);
+
+          return {
+            role,
+            content,
+            createdAt: created,
+            serverMessageId: (m.id ?? m.messageId) as string | undefined,
+          };
+        });
+
+      const updatedAt =
+        normalized.length > 0 ? normalized[normalized.length - 1].createdAt : meta.updatedAt;
+
+      // 스펙 응답에서 title이 있으면 사용
+      const finalTitle = trimStr(historyData.title) || meta.title;
+
+      return {
+        serverSessionId,
+        title: finalTitle,
+        domain: meta.domain,
+        createdAt: meta.createdAt,
+        updatedAt,
+        messages: normalized,
+      };
+    }
+  }
+
+  // Fallback: 기존 엔드포인트 사용 (/chat/sessions/{sessionId}/messages)
   const pageSize = 100;
   let cursor: string | null = null;
   let hasNext = true;
@@ -549,6 +604,7 @@ const ChatbotApp: React.FC<ChatbotAppProps> = ({
   onRequestFocus,
   onOpenReviewerPanel,
   onOpenCreatorPanel,
+  onPlayEducationVideo,
 }) => {
   // 패널 크기 + 위치
   const [size, setSize] = useState<Size>(INITIAL_SIZE);
@@ -1203,7 +1259,8 @@ const ChatbotApp: React.FC<ChatbotAppProps> = ({
           return;
         }
 
-        const targetDomain: ChatDomain = fromChatServiceDomain(item.domain, "general");
+        // FAQ 모드 유지: domain을 "faq"로 설정하여 입력창 숨김 및 카테고리 칩 계속 표시
+        const targetDomain: ChatDomain = "faq";
 
         setSessions((prev) =>
           prev.map((session) => {
@@ -1327,8 +1384,10 @@ const ChatbotApp: React.FC<ChatbotAppProps> = ({
     try {
       setIsSending(true);
 
+      // 기본값을 true로: env 미설정이어도 스트리밍 경로(sendChatToAIStream)를 반드시 탄다.
+      // 서버가 스트림을 못 주면 chatApi.ts에서 자동 fallback 처리한다.
       const ENABLE_CHAT_STREAMING =
-        String(import.meta.env.VITE_CHAT_STREAMING ?? "").toLowerCase() === "true";
+        String(import.meta.env.VITE_CHAT_STREAMING ?? "true").toLowerCase() === "true";
       try {
         setIsSending(true);
 
@@ -1395,6 +1454,19 @@ const ChatbotApp: React.FC<ChatbotAppProps> = ({
                   };
                 })
               );
+
+              // AI 응답에 영상 재생 액션이 있으면 처리
+              if (
+                f.action?.type === "PLAY_VIDEO" &&
+                f.action.educationId &&
+                f.action.videoId
+              ) {
+                onPlayEducationVideo?.({
+                  educationId: f.action.educationId,
+                  videoId: f.action.videoId,
+                  resumePositionSeconds: f.action.resumePositionSeconds,
+                });
+              }
             },
           });
 
@@ -1425,6 +1497,19 @@ const ChatbotApp: React.FC<ChatbotAppProps> = ({
               };
             })
           );
+
+          // AI 응답에 영상 재생 액션이 있으면 처리
+          if (
+            reply.action?.type === "PLAY_VIDEO" &&
+            reply.action.educationId &&
+            reply.action.videoId
+          ) {
+            onPlayEducationVideo?.({
+              educationId: reply.action.educationId,
+              videoId: reply.action.videoId,
+              resumePositionSeconds: reply.action.resumePositionSeconds,
+            });
+          }
         }
       } catch (error) {
         console.error("sendChatToAI error:", error);
@@ -1497,22 +1582,130 @@ const ChatbotApp: React.FC<ChatbotAppProps> = ({
           void (async () => {
             try {
               setIsSending(true);
-              const res = await retryMessage(current.serverId as string, targetMessageId);
-              const t = Date.now();
 
-              const assistantMessage: ChatMessage = {
-                id: makeLocalId("local-msg"),
-                role: "assistant",
-                content: res.content,
-                createdAt: t,
-                serverId: res.messageId,
-              };
+              // 기본값을 true로: env 미설정이어도 스트리밍 경로를 반드시 탄다.
+              const ENABLE_CHAT_STREAMING =
+                String(import.meta.env.VITE_CHAT_STREAMING ?? "true").toLowerCase() === "true";
 
-              setSessions((prev) =>
-                prev.map((s) =>
-                  s.id === current.id ? { ...s, messages: [...s.messages, assistantMessage], updatedAt: t } : s
-                )
-              );
+              if (ENABLE_CHAT_STREAMING) {
+                // 일반 메시지와 동일한 스트리밍 방식으로 처리
+                // 1) placeholder assistant 메시지 생성
+                const placeholderId = makeLocalId("local-msg");
+                const placeholderTime = Date.now();
+
+                const placeholder: ChatMessage = {
+                  id: placeholderId,
+                  role: "assistant",
+                  content: "",
+                  createdAt: placeholderTime,
+                };
+
+                setSessions((prev) =>
+                  prev.map((session) =>
+                    session.id === current.id
+                      ? {
+                          ...session,
+                          messages: [...session.messages, placeholder],
+                          updatedAt: placeholderTime,
+                        }
+                      : session
+                  )
+                );
+
+                let acc = "";
+
+                const final = await retryMessageStream(
+                  current.serverId as string,
+                  targetMessageId,
+                  {
+                    onDelta: (delta: string) => {
+                      acc += delta;
+
+                      // placeholder content 업데이트
+                      setSessions((prev) =>
+                        prev.map((session) => {
+                          if (session.id !== current.id) return session;
+
+                          const nextMessages = session.messages.map((m) =>
+                            m.id === placeholderId ? { ...m, content: acc } : m
+                          );
+
+                          return { ...session, messages: nextMessages, updatedAt: Date.now() };
+                        })
+                      );
+                    },
+                    onFinal: (f: ChatSendResult) => {
+                      // 최종 serverId / sessionId 확정
+                      setSessions((prev) =>
+                        prev.map((session) => {
+                          if (session.id !== current.id) return session;
+
+                          const nextMessages = session.messages.map((m) =>
+                            m.id === placeholderId
+                              ? { ...m, content: f.content || acc, serverId: f.messageId }
+                              : m
+                          );
+
+                          return {
+                            ...session,
+                            serverId: session.serverId ?? f.sessionId,
+                            messages: nextMessages,
+                            updatedAt: Date.now(),
+                          };
+                        })
+                      );
+
+                      // AI 응답에 영상 재생 액션이 있으면 처리 (일반 메시지와 동일)
+                      if (
+                        f.action?.type === "PLAY_VIDEO" &&
+                        f.action.educationId &&
+                        f.action.videoId
+                      ) {
+                        onPlayEducationVideo?.({
+                          educationId: f.action.educationId,
+                          videoId: f.action.videoId,
+                          resumePositionSeconds: f.action.resumePositionSeconds,
+                        });
+                      }
+                    },
+                  }
+                );
+
+                // retryMessageStream 내부에서 UI 업데이트를 끝내지만,
+                // 여기서 final을 안 쓰면 lint가 불편할 수 있어 유지
+                void final;
+              } else {
+                // 기존 non-stream (fallback)
+                const res = await retryMessage(current.serverId as string, targetMessageId);
+                const t = Date.now();
+
+                const assistantMessage: ChatMessage = {
+                  id: makeLocalId("local-msg"),
+                  role: "assistant",
+                  content: res.content,
+                  createdAt: t,
+                  serverId: res.messageId,
+                };
+
+                setSessions((prev) =>
+                  prev.map((s) =>
+                    s.id === current.id ? { ...s, messages: [...s.messages, assistantMessage], updatedAt: t } : s
+                  )
+                );
+
+                // AI 응답에 영상 재생 액션이 있으면 처리
+                if (
+                  res.action?.type === "PLAY_VIDEO" &&
+                  res.action.educationId &&
+                  res.action.videoId
+                ) {
+                  onPlayEducationVideo?.({
+                    educationId: res.action.educationId,
+                    videoId: res.action.videoId,
+                    resumePositionSeconds: res.action.resumePositionSeconds,
+                  });
+                }
+              }
             } catch (e) {
               console.warn("[ChatbotApp] retryMessage failed, fallback to resend:", e);
               await processSendMessage(base);

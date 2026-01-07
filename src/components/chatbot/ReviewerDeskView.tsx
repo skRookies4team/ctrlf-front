@@ -9,7 +9,7 @@ import React, {
 import "./chatbot.css";
 import { computePanelPosition, type Anchor, type PanelSize } from "../../utils/chat";
 
-import { useReviewerDeskController } from "./useReviewerDeskController";
+import { useReviewerDeskController, getReviewStage } from "./useReviewerDeskController";
 import ReviewerQueue from "./ReviewerQueue";
 import ReviewerDetail from "./ReviewerDetail";
 import ReviewerActionBar from "./ReviewerActionBar";
@@ -360,7 +360,6 @@ const ReviewerDeskView: React.FC<ReviewerDeskViewProps> = ({
     handleSaveNote,
     moveSelection,
     lastRefreshedAtLabel,
-    devtools,
     stageFilter,
     setStageFilter,
     stageCounts,
@@ -418,12 +417,17 @@ const ReviewerDeskView: React.FC<ReviewerDeskViewProps> = ({
     }
 
     if (selectedItem.contentType === "VIDEO") {
-      const stage: 1 | 2 = selectedItem.videoUrl?.trim() ? 2 : 1;
-      return {
-        stage,
-        publishOnApprove: stage === 2,
-        label: stage === 2 ? "2차 승인" : "1차 승인",
-      };
+      // getReviewStage를 사용하여 reviewStage 필드를 우선 확인
+      const stage = getReviewStage(selectedItem);
+      if (stage === 1 || stage === 2) {
+        return {
+          stage,
+          publishOnApprove: stage === 2,
+          label: stage === 2 ? "2차 승인" : "1차 승인",
+        };
+      }
+      // stage가 null인 경우 (VIDEO가 아닌 경우는 없지만 타입 안전성을 위해)
+      return { stage: null as 1 | 2 | null, publishOnApprove: false, label: "승인" };
     }
 
     return { stage: null as 1 | 2 | null, publishOnApprove: true, label: "승인" };
@@ -875,28 +879,7 @@ const ReviewerDeskView: React.FC<ReviewerDeskViewProps> = ({
             </div>
 
             <div className="cb-reviewer-header-actions">
-              {devtools.enabled && (
-                <>
-                  <button
-                    type="button"
-                    className="cb-reviewer-ghost-btn"
-                    onClick={devtools.toggleDataset}
-                    disabled={isBusy || isOverlayOpen}
-                    title="DEV: 대량 데이터/기본 데이터 토글"
-                  >
-                    {devtools.datasetLabel}
-                  </button>
-                  <button
-                    type="button"
-                    className="cb-reviewer-ghost-btn"
-                    onClick={devtools.simulateConflict}
-                    disabled={isBusy || isOverlayOpen || !selectedId}
-                    title="DEV: 충돌 시뮬레이션(버전/상태 변경)"
-                  >
-                    충돌 시뮬
-                  </button>
-                </>
-              )}
+              {/* devtools 제거됨 - 백엔드 API 연동 완료 */}
 
               <button
                 type="button"

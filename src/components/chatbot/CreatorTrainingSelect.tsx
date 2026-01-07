@@ -1,5 +1,5 @@
 // src/components/chatbot/CreatorTrainingSelect.tsx
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { JobTrainingOption } from "./creatorStudioTypes";
 
@@ -15,7 +15,6 @@ function clamp(n: number, min: number, max: number) {
 
 /** 트리거(닫힌 상태)에서 너무 길어지는 텍스트를 “짧게” 보여주기 */
 function toTriggerLabel(fullName: string) {
-  // 예: "[JT-COM-004] 공통 · 정보자산/문서 반출 관리 실무(등급/반출 절차) (60m)"
   const m = fullName.match(/^\[([^\]]+)\]\s*(.+)$/);
   if (!m) return fullName;
 
@@ -25,7 +24,6 @@ function toTriggerLabel(fullName: string) {
   // "공통 ·", "총무팀 ·" 같은 프리픽스가 과하면 제거(트리거에서만)
   rest = rest.replace(/^[^·]+·\s*/, "");
 
-  // 너무 길면 괄호 설명 일부는 CSS ellipsis에 맡기되, 텍스트 자체도 조금 정리
   return `${id} · ${rest}`;
 }
 
@@ -76,18 +74,37 @@ export default function CreatorTrainingSelect({
   const [q, setQ] = useState("");
   const [pos, setPos] = useState<MenuPos | null>(null);
 
+  const closeMenu = useCallback(() => {
+    setOpen(false);
+    setPos(null);
+    setQ("");
+  }, []);
+
   const selected = useMemo(
     () => options.find((o) => o.id === value) ?? null,
     [options, value]
   );
 
+  function optionName(o: JobTrainingOption): string {
+    const anyO = o as unknown as Record<string, unknown>;
+    const name =
+      typeof anyO.name === "string" && anyO.name.trim()
+        ? anyO.name.trim()
+        : typeof anyO.label === "string" && anyO.label.trim()
+          ? anyO.label.trim()
+          : typeof anyO.title === "string" && anyO.title.trim()
+            ? anyO.title.trim()
+            : o.id;
+    return name;
+  }
+
   const grouped = useMemo(() => {
     const query = q.trim().toLowerCase();
     const filtered = query
       ? options.filter((o) => {
-          const name = o.name.toLowerCase();
-          const id = o.id.toLowerCase();
-          const g = groupLabelById(o.id).toLowerCase();
+          const name = optionName(o).toLowerCase();
+          const id = String(o.id ?? "").toLowerCase();
+          const g = groupLabelById(String(o.id ?? "")).toLowerCase();
           return name.includes(query) || id.includes(query) || g.includes(query);
         })
       : options;
@@ -108,7 +125,6 @@ export default function CreatorTrainingSelect({
       );
     }
 
-    // 그룹 순서 고정
     const order = [
       "공통",
       "총무팀",
@@ -136,21 +152,14 @@ export default function CreatorTrainingSelect({
     const vw = window.innerWidth;
     const vh = window.innerHeight;
 
-    // 폭은 “트리거 폭 고정” 유지 (요구사항)
     const width = Math.round(r.width);
-    const left = Math.round(
-      clamp(r.left, VIEWPORT_PAD, vw - VIEWPORT_PAD - width)
-    );
+    const left = Math.round(clamp(r.left, VIEWPORT_PAD, vw - VIEWPORT_PAD - width));
 
-    // 아래로 열 기본
     const downTop = r.bottom + GAP;
     const wouldOverflowDown = downTop + MENU_MAX_H > vh - VIEWPORT_PAD;
 
-    // openUp 여부는 기존처럼 MENU_MAX_H 기준으로 판단(충분히 안전)
-    const openUp =
-      wouldOverflowDown && r.top - GAP - MENU_MAX_H > VIEWPORT_PAD;
+    const openUp = wouldOverflowDown && r.top - GAP - MENU_MAX_H > VIEWPORT_PAD;
 
-    // 초기 top은 “임시”로 계산 (openUp이면 MENU_MAX_H 기준)
     const top = Math.round(
       openUp
         ? r.top - GAP - MENU_MAX_H
@@ -160,11 +169,6 @@ export default function CreatorTrainingSelect({
     setPos({ top, left, width, openUp });
   };
 
-  /**
-   * openUp 케이스에서 “실제 메뉴 높이”로 top을 재보정.
-   * 검색 결과가 적어 MENU_MAX_H보다 메뉴가 짧아지면,
-   * top을 올려서(덜 위로) 트리거-메뉴 간 빈 공간을 제거한다.
-   */
   const adjustTopToActualHeight = () => {
     const r = triggerRectRef.current;
     const menuEl = menuRef.current;
@@ -176,17 +180,10 @@ export default function CreatorTrainingSelect({
     setPos((prev) => {
       if (!prev) return prev;
 
-      // 아래로 여는 케이스는 이미 clamp가 잘 맞는 편이라 보정 필요가 크지 않지만
-      // 일관성 위해 동일 로직 적용 가능
       const rawTop = prev.openUp ? r.top - GAP - menuH : r.bottom + GAP;
+      const top = Math.round(clamp(rawTop, VIEWPORT_PAD, vh - VIEWPORT_PAD - menuH));
 
-      const top = Math.round(
-        clamp(rawTop, VIEWPORT_PAD, vh - VIEWPORT_PAD - menuH)
-      );
-
-      // 불필요한 렌더 방지
       if (Math.abs(prev.top - top) < 1) return prev;
-
       return { ...prev, top };
     });
   };
@@ -197,12 +194,10 @@ export default function CreatorTrainingSelect({
 
     computeMenuPos();
 
-    // 다음 tick에 포커스
     requestAnimationFrame(() => {
       inputRef.current?.focus();
     });
 
-    // 메뉴가 실제로 portal에 붙은 뒤(렌더 후) 높이를 재서 top 보정
     requestAnimationFrame(() => {
       adjustTopToActualHeight();
     });
@@ -228,12 +223,26 @@ export default function CreatorTrainingSelect({
       if (triggerRef.current?.contains(t)) return;
       if (menuRef.current?.contains(t)) return;
 
-      setOpen(false);
+      closeMenu();
     };
 
     window.addEventListener("mousedown", onDown);
     return () => window.removeEventListener("mousedown", onDown);
-  }, [open]);
+  }, [open, closeMenu]);
+
+  // ESC로 닫기
+  useEffect(() => {
+    if (!open) return;
+
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        closeMenu();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, closeMenu]);
 
   // 스크롤/리사이즈 대응:
   // - 메뉴 내부 스크롤이면 무시
@@ -243,11 +252,11 @@ export default function CreatorTrainingSelect({
 
     const onScroll = (e: Event) => {
       const t = e.target as Node | null;
-      if (t && menuRef.current?.contains(t)) return; // 메뉴 스크롤은 닫지 않음
-      setOpen(false);
+      if (t && menuRef.current?.contains(t)) return;
+      closeMenu();
     };
 
-    const onResize = () => setOpen(false);
+    const onResize = () => closeMenu();
 
     window.addEventListener("scroll", onScroll, true);
     window.addEventListener("resize", onResize);
@@ -255,20 +264,20 @@ export default function CreatorTrainingSelect({
       window.removeEventListener("scroll", onScroll, true);
       window.removeEventListener("resize", onResize);
     };
-  }, [open]);
+  }, [open, closeMenu]);
 
   const onToggle = () => {
     if (disabled) return;
-    setOpen((v) => !v);
+    if (open) closeMenu();
+    else setOpen(true);
   };
 
   const onPick = (id: string) => {
     onChange(id);
-    setOpen(false);
-    setQ("");
+    closeMenu();
   };
 
-  const triggerText = selected ? toTriggerLabel(selected.name) : placeholder;
+  const triggerText = selected ? toTriggerLabel(optionName(selected)) : placeholder;
 
   return (
     <div className="cb-creator-training-select">
@@ -284,7 +293,7 @@ export default function CreatorTrainingSelect({
         )}
         onMouseDown={(e) => e.stopPropagation()}
         onClick={onToggle}
-        title={selected?.name ?? ""}
+        title={selected ? optionName(selected) : ""}
         aria-haspopup="listbox"
         aria-expanded={open}
       >
@@ -302,7 +311,7 @@ export default function CreatorTrainingSelect({
               style={{ top: pos.top, left: pos.left, width: pos.width }}
               role="listbox"
               onMouseDown={(e) => e.stopPropagation()}
-              onWheel={(e) => e.stopPropagation()} // 부모 스크롤로 번지는 것 방지
+              onWheel={(e) => e.stopPropagation()}
             >
               <div className="cb-creator-training-menu-search">
                 <input
@@ -316,15 +325,11 @@ export default function CreatorTrainingSelect({
 
               <div className="cb-creator-training-menu-list">
                 {grouped.length === 0 ? (
-                  <div className="cb-creator-training-menu-empty">
-                    검색 결과가 없습니다.
-                  </div>
+                  <div className="cb-creator-training-menu-empty">검색 결과가 없습니다.</div>
                 ) : (
                   grouped.map((g) => (
                     <div key={g.group} className="cb-creator-training-group">
-                      <div className="cb-creator-training-group-title">
-                        {g.group}
-                      </div>
+                      <div className="cb-creator-training-group-title">{g.group}</div>
                       {g.items.map((o) => {
                         const active = o.id === value;
                         return (
@@ -336,9 +341,9 @@ export default function CreatorTrainingSelect({
                               active && "cb-creator-training-option--active"
                             )}
                             onClick={() => onPick(o.id)}
-                            title={o.name}
+                            title={optionName(o)}
                           >
-                            {o.name}
+                            {optionName(o)}
                           </button>
                         );
                       })}

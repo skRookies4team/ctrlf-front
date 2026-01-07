@@ -1,4 +1,4 @@
-// src/components/chatbot/adminDashboardTypes.ts
+// src/components/dashboard/adminDashboardTypes.ts
 import type { PeriodPreset } from "./adminFilterTypes";
 
 /**
@@ -11,7 +11,8 @@ export type AdminTabId =
   | "metrics"
   | "accounts"
   | "logs"
-  | "policy";
+  | "policy"
+  | "faq";
 
 // adminFilterTypes 의 PeriodPreset 을 그대로 사용
 export type PeriodFilter = PeriodPreset;
@@ -95,7 +96,6 @@ export interface DeptQuizScoreRow {
 export interface QuizSummaryRow {
   id: string;
   quizTitle: string;
-  round: number;
   avgScore: number;
   participantCount: number;
   passRate: number; // %
@@ -167,22 +167,29 @@ export interface PiiReport {
 
 /**
  * 세부 로그 탭 타입들
+ * 백엔드 API 스펙에 맞춘 타입 정의
  */
 export interface LogListItem {
-  id: string;
-  createdAt: string; // '2025-12-09 10:21:34'
-  userId: string;
-  userRole: string;
-  department: string;
-  domain: string;
-  route: string;
-  modelName: string;
-  hasPiiInput: boolean;
-  hasPiiOutput: boolean;
-  ragUsed: boolean;
-  ragSourceCount: number;
-  latencyMsTotal: number;
-  errorCode: string | null;
+  id: number; // 로그 ID (PK)
+  createdAt: string; // ISO-8601 형식 (예: "2025-01-15T10:30:00Z")
+  userId: string; // 사용자 ID / 사번
+  userRole: string; // 사용자 역할 (EMPLOYEE, MANAGER, ADMIN, INCIDENT_MANAGER)
+  department: string | null; // 사용자 부서 (nullable)
+  domain: string; // 도메인 (POLICY, INCIDENT, EDUCATION)
+  intent: string; // 질문 의도 (POLICY_QA, INCIDENT_REPORT, EDUCATION_QA, GENERAL_CHAT 등)
+  route: string; // 라우팅 결과 (ROUTE_RAG_INTERNAL, ROUTE_LLM_ONLY, ROUTE_INCIDENT 등)
+  modelName: string | null; // 사용된 LLM 모델명 (nullable)
+  hasPiiInput: boolean; // 입력(질문)에서 PII 검출 여부
+  hasPiiOutput: boolean; // 출력(답변)에서 PII 검출 여부
+  ragUsed: boolean; // RAG 검색 사용 여부
+  ragSourceCount: number; // RAG로 검색된 문서 개수
+  latencyMsTotal: number; // 전체 처리 시간 (밀리초)
+  errorCode: string | null; // 에러 코드 (에러 발생 시)
+  errorMessage: string | null; // 에러 메시지 (에러 발생 시)
+  conversationId: string; // 채팅 세션 ID
+  turnId: number | null; // 세션 내 턴 인덱스 (0부터 시작, nullable)
+  questionMasked: string | null; // 마스킹된 질문 텍스트 (PII 제거됨, nullable)
+  answerMasked: string | null; // 마스킹된 답변 텍스트 (PII 제거됨, nullable)
 }
 
 /**
@@ -193,7 +200,6 @@ export type RoleKey =
   | "EMPLOYEE"
   | "VIDEO_CREATOR"
   | "CONTENTS_REVIEWER"
-  | "COMPLAINT_MANAGER"
   | "SYSTEM_ADMIN";
 
 export type CreatorType = "DEPT_CREATOR" | "GLOBAL_CREATOR" | null;

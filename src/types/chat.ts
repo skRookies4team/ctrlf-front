@@ -122,6 +122,49 @@ export interface ChatRequest {
 
   /** 서버 세션 UUID(알고 있으면 전달) */
   serverSessionId?: string;
+
+  /**
+   * A/B 테스트 임베딩 모델 선택 (선택)
+   * - "openai": text-embedding-3-large (기본값)
+   * - "sroberta": ko-sroberta-multitask
+   * - null/undefined: 기본값(openai) 사용
+   */
+  model?: "openai" | "sroberta" | null;
+}
+
+// =============================================================================
+// ChatAction: AI 응답에 포함된 프론트엔드 액션 지시
+// =============================================================================
+
+/** 프론트엔드에서 실행할 액션 타입 */
+export type ChatActionType = "PLAY_VIDEO" | "OPEN_EDU_PANEL" | "OPEN_QUIZ";
+
+/** AI 응답에 포함된 프론트엔드 액션 정보 */
+export interface ChatAction {
+  type: ChatActionType;
+  /** 교육 ID (영상 재생 시 필수) */
+  educationId?: string;
+  /** 영상 ID (영상 재생 시 필수) */
+  videoId?: string;
+  /** 이어보기 시작 위치(초) */
+  resumePositionSeconds?: number;
+  /** 교육 제목 (UI 표시용) */
+  educationTitle?: string;
+  /** 영상 제목 (UI 표시용) */
+  videoTitle?: string;
+  /** 현재 진도율(%) */
+  progressPercent?: number;
+}
+
+/**
+ * 교육 영상 재생 요청 파라미터
+ * - AI 응답의 PLAY_VIDEO 액션에서 추출
+ * - ChatbotApp → FloatingChatbotRoot → EduPanel 순으로 전달
+ */
+export interface PlayEducationVideoParams {
+  educationId: string;
+  videoId: string;
+  resumePositionSeconds?: number;
 }
 
 /** sendChatToAI 결과(서버 UUID 포함) */
@@ -131,6 +174,8 @@ export interface ChatSendResult {
   role: ChatRole;
   content: string;
   createdAt?: string;
+  /** 프론트엔드에서 실행할 액션 정보 (영상 재생 등) */
+  action?: ChatAction;
 }
 
 // 신고 모달에서 넘어가는 신고 데이터
