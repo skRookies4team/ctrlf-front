@@ -37,6 +37,8 @@ type DragState = {
 
 import type { PlayEducationVideoParams } from "../../types/chat";
 
+import type { PlayEducationVideoParams } from "../../types/chat";
+
 type VideoProgressMap = Record<string, number>;
 
 export interface EduPanelProps {
@@ -1106,7 +1108,83 @@ const EduPanel: React.FC<EduPanelProps> = ({
   }, [hasDOM, educations, ensureVideosLoaded]);
 
   // =========================
-  // 1-C) 자동 재생 처리 (AI 챗봇에서 PLAY_VIDEO 액션 감지 시)
+  // 1-C) handleVideoClick 선언 (useEffect보다 먼저 선언 필요)
+  // =========================
+  // handleVideoClick를 "async + presign 선반영"으로 변경
+  const handleVideoClick = useCallback(
+    async (educationId: string, educationTitle: string, video: UiVideo) => {
+      const raw = (video.videoUrl ?? "").trim();
+      if (!raw) {
+        pushToast("영상 URL이 없습니다. 관리자에게 문의해 주세요.", "warn");
+        return;
+      }
+
+      // watch 전환 시 이전 resolve는 abort
+      abortWatchResolve();
+
+      listRestoreRef.current = { size: sizeRef.current, pos: posRef.current };
+
+      const base = clamp(video.progress ?? 0, 0, 100);
+
+      // watch 패널부터 먼저 열어 UX 지연 방지
+      const prevPos = posRef.current;
+      const prevSize = sizeRef.current;
+      const nextSize = WATCH_DEFAULT_SIZE;
+      const minTop = getMinTop(topSafeRef.current);
+      setSize(nextSize);
+      setPanelPos(derivePosByBottomRight(prevPos, prevSize, nextSize, minTop));
+
+      // 초기 선택 상태 (rawVideoUrl은 항상 유지)
+      const knownPlayable = getKnownPlayableUrl(video.id, raw);
+
+      setSelectedVideo({
+        ...video,
+        educationId,
+        educationTitle,
+        rawVideoUrl: raw,
+        videoUrl: knownPlayable, // presign된 URL이 있으면 즉시 반영
+        progress: base,
+      });
+
+      // watch 상태 초기화
+      setWatchPercent(base);
+
+      // 완료/완료요청 상태 초기화
+      completedSentRef.current = Boolean(video.completed) || base >= 100;
+      completeRequestPosRef.current = null;
+
+      maxWatchedTimeRef.current = 0;
+      videoDurationRef.current = 0;
+      watchTimeAccumRef.current = 0;
+      lastTimeSampleRef.current = null;
+      setIsPlaying(false);
+      setSaveStatus("idle");
+      clearSaveTimer();
+
+      // playable이 이미 확보되면 끝
+      if (knownPlayable) {
+        setPresignState(video.id, { status: "ready", url: knownPlayable });
+        return;
+      }
+
+      // 아니면 presign resolve
+      try {
+        const resolved = await resolvePlayableUrl(video.id, raw, { watch: true });
+
+        // 이미 다른 영상으로 이동한 경우 state 업데이트 금지
+        const cur = selectedVideoRef.current;
+        if (!cur || cur.id !== video.id) return;
+
+        setSelectedVideo((prev) => (prev && prev.id === video.id ? { ...prev, videoUrl: resolved } : prev));
+      } catch (e: unknown) {
+        if (isAbortError(e)) return;
+      }
+    },
+    [abortWatchResolve, clearSaveTimer, getKnownPlayableUrl, pushToast, resolvePlayableUrl, setPresignState]
+  );
+
+  // =========================
+  // 1-D) 자동 재생 처리 (AI 챗봇에서 PLAY_VIDEO 액션 감지 시)
   // - 취소 플래그 + 요청 토큰 패턴으로 동시성/역전 방지
   // =========================
   const playRequestIdRef = useRef(0);

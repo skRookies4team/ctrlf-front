@@ -5496,14 +5496,15 @@
 .cb-reviewer-mode {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;  
+  margin-left: auto;
 }
 
 .cb-reviewer-mode-pill {
   border: 1px solid #e5e7eb;
   background-color: #ffffff;
   border-radius: 999px;
-  padding: 6px 10px;
+  padding: 6px 8px;  
   font-size: 11px;
   font-weight: 800;
   color: #111827;
@@ -6099,10 +6100,20 @@
   padding: 16px;
 }
 
+.cb-reviewer-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
 .cb-reviewer-modal-title {
   font-size: 14px;
   font-weight: 900;
   color: #111827;
+  margin: 0;
+  flex: 1;
 }
 
 .cb-reviewer-modal-desc {
@@ -6123,6 +6134,70 @@
   margin-top: 8px;
   font-size: 12px;
   color: #ef4444;
+}
+
+/* 반려 모달 바디 */
+.cb-reviewer-reject-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.cb-reviewer-reject-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cb-reviewer-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: #111827;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.cb-reviewer-required {
+  color: #ef4444;
+  font-weight: 700;
+}
+
+.cb-reviewer-reject-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.cb-reviewer-reject-actions .cb-reviewer-ghost-btn,
+.cb-reviewer-reject-actions .cb-reviewer-danger-btn {
+  min-width: 80px;
+  padding: 10px 14px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+/* 승인 모달 바디 */
+.cb-reviewer-approve-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.cb-reviewer-approve-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.cb-reviewer-approve-actions .cb-reviewer-ghost-btn,
+.cb-reviewer-approve-actions .cb-reviewer-primary-btn {
+  min-width: 80px;
+  padding: 10px 14px;
+  font-size: 12px;
+  font-weight: 800;
 }
 
 @media (max-width: 1040px) {
@@ -6217,6 +6292,12 @@
 .cb-reviewer-queue-quick {
   margin-top: 10px;
   display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cb-reviewer-queue-quick-row {
+  display: flex;
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
@@ -6230,21 +6311,39 @@
   font-weight: 700;
 }
 
+/* 1) 첫 줄: 컨트롤 / 둘째 줄: hotkeys 고정 */
+.cb-reviewer-queue-quick-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap; /* nowrap 절대 금지 */
+}
+
+/* hotkeys는 항상 다음 줄로 떨어지게 */
+.cb-reviewer-hotkeys {
+  flex-basis: 100%;
+  margin-top: 2px;
+}
+
+/* 2) 정렬은 가운데(자연 배치), "리스트" 블록을 오른쪽 정렬 */
 .cb-reviewer-sort {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  margin-left: auto;
+  margin-left: 0; /* auto 제거 */
 }
 
 .cb-reviewer-sort-label {
   font-size: 11px;
   color: #6b7280;
   font-weight: 700;
+  white-space: nowrap; /* '리스트'가 리/트로 깨지는 현상 방지 */
 }
 
 .cb-reviewer-sort-select {
   height: 32px;
+  width: 80px; 
+  max-width: 96px;
   border-radius: 12px;
   border: 1px solid #e5e7eb;
   padding: 0 10px;
@@ -6342,6 +6441,58 @@
   padding: 14px 16px;
   background-color: #f9fafb;
   overflow: auto;
+}
+
+/* 확대 보기 모달 내부의 CreatorScriptSceneEditor 크기 조정 */
+.cb-reviewer-preview-body .cb-creator-scene-editor {
+  height: 100%;
+  min-height: 600px;
+  max-height: none;
+  resize: none; /* 모달에서는 리사이즈 비활성화 */
+}
+
+.cb-reviewer-preview-body .cb-creator-scene-list {
+  width: 35%;
+  min-width: 300px;
+  max-width: 400px;
+}
+
+.cb-reviewer-preview-body .cb-creator-scene-edit {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 모달 내부 폰트 크기 조정 */
+.cb-reviewer-preview-body .cb-creator-scene-list-head {
+  font-size: 14px;
+}
+
+.cb-reviewer-preview-body .cb-creator-chapter-title {
+  font-size: 13px;
+}
+
+.cb-reviewer-preview-body .cb-creator-scene-purpose {
+  font-size: 13px;
+}
+
+.cb-reviewer-preview-body .cb-creator-scene-edit-title {
+  font-size: 14px;
+}
+
+.cb-reviewer-preview-body .cb-creator-scene-field-label {
+  font-size: 13px;
+}
+
+.cb-reviewer-preview-body .cb-creator-scene-ro-label {
+  font-size: 12px;
+}
+
+.cb-reviewer-preview-body .cb-creator-scene-ro-value {
+  font-size: 13px;
+}
+
+.cb-reviewer-preview-body .cb-creator-scene-ro-hint {
+  font-size: 13px;
 }
 
 .cb-reviewer-preview-media {
@@ -9474,4 +9625,297 @@
 .cb-files-item-status--done {
   border-color: #bbf7d0;
   background: #ecfdf5;
+}
+/* =========================
+   Creator: Education Picker Modal (Light theme aligned with Creator Studio)
+========================= */
+.cb-creator-edu-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+
+  /* Creator Studio(화이트 UI)와 맞는 라이트 오버레이 */
+  background: rgba(17, 24, 39, 0.28);
+  backdrop-filter: blur(2px);
+}
+
+.cb-creator-edu-modal {
+  width: min(820px, calc(100vw - 48px));
+  max-height: min(760px, calc(100vh - 48px));
+  overflow: hidden;
+
+  /* 화이트 카드 스타일 */
+  border-radius: 16px;
+  border: 1px solid rgba(17, 24, 39, 0.12);
+  background: #ffffff;
+  box-shadow:
+    0 24px 60px rgba(0, 0, 0, 0.18),
+    0 2px 10px rgba(0, 0, 0, 0.06);
+
+  display: flex;
+  flex-direction: column;
+}
+
+.cb-creator-edu-modal__head {
+  padding: 18px 18px 14px 18px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+
+  /* 라이트 구분선 */
+  border-bottom: 1px solid rgba(17, 24, 39, 0.10);
+  background: #ffffff;
+}
+
+.cb-creator-edu-modal__head-left {
+  min-width: 0;
+}
+
+.cb-creator-edu-modal__badge {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 10px;
+
+  /* 2번 이미지의 CREATOR STUDIO pill 느낌 */
+  border-radius: 999px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  font-weight: 800;
+  color: rgba(17, 24, 39, 0.88);
+  background: #ffffff;
+  border: 1px solid rgba(17, 24, 39, 0.14);
+}
+
+.cb-creator-edu-modal__title {
+  margin-top: 10px;
+  font-size: 20px;
+  font-weight: 900;
+  color: rgba(17, 24, 39, 0.92);
+}
+
+.cb-creator-edu-modal__desc {
+  margin-top: 6px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: rgba(17, 24, 39, 0.62);
+}
+
+.cb-creator-edu-modal__close {
+  width: 34px;
+  height: 34px;
+
+  /* 2번 이미지 우측 상단 X 버튼 느낌 */
+  border-radius: 999px;
+  border: 1px solid rgba(17, 24, 39, 0.14);
+  background: #ffffff;
+  color: rgba(17, 24, 39, 0.70);
+
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.06);
+}
+
+.cb-creator-edu-modal__close:hover {
+  background: rgba(17, 24, 39, 0.04);
+  color: rgba(17, 24, 39, 0.86);
+}
+
+.cb-creator-edu-modal__body {
+  padding: 14px 18px 18px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+.cb-creator-edu-modal__search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* NOTE:
+   이 클래스가 input에 직접 붙어있는 구조/컨테이너 구조 둘 다 커버하도록 작성 */
+.cb-creator-edu-modal__search-input {
+  flex: 1;
+  min-width: 0;
+
+  height: 38px;
+  padding: 0 12px;
+
+  border-radius: 12px;
+  border: 1px solid rgba(17, 24, 39, 0.14);
+  background: #ffffff;
+
+  color: rgba(17, 24, 39, 0.92);
+  outline: none;
+}
+
+.cb-creator-edu-modal__search-input::placeholder {
+  color: rgba(17, 24, 39, 0.45);
+}
+
+/* 만약 input이 내부에 있는 구조면 이것도 적용되게 */
+.cb-creator-edu-modal__search-input input {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  outline: none;
+}
+
+.cb-creator-edu-modal__search-input input::placeholder {
+  color: rgba(17, 24, 39, 0.45);
+}
+
+.cb-creator-edu-modal__reload {
+  white-space: nowrap;
+
+  /* 버튼이 기본 스타일을 못받는 경우 대비 */
+  height: 38px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(17, 24, 39, 0.14);
+  background: #ffffff;
+  color: rgba(17, 24, 39, 0.82);
+  cursor: pointer;
+}
+
+.cb-creator-edu-modal__reload:hover {
+  background: rgba(17, 24, 39, 0.04);
+}
+
+.cb-creator-edu-modal__error {
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(239, 68, 68, 0.20);
+  background: rgba(239, 68, 68, 0.06);
+  color: rgba(127, 29, 29, 0.92);
+  font-size: 12px;
+}
+
+.cb-creator-edu-modal__list {
+  flex: 1;
+  overflow: auto;
+
+  padding-right: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+
+  /* 모달 내부 스크롤 안정 */
+  overscroll-behavior: contain;
+}
+
+/* 스크롤바 라이트 톤 */
+.cb-creator-edu-modal__list::-webkit-scrollbar {
+  width: 10px;
+}
+.cb-creator-edu-modal__list::-webkit-scrollbar-track {
+  background: transparent;
+}
+.cb-creator-edu-modal__list::-webkit-scrollbar-thumb {
+  background: rgba(17, 24, 39, 0.16);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+.cb-creator-edu-modal__list::-webkit-scrollbar-thumb:hover {
+  background: rgba(17, 24, 39, 0.22);
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+.cb-creator-edu-modal__empty {
+  padding: 14px 10px;
+  color: rgba(17, 24, 39, 0.58);
+  font-size: 13px;
+}
+
+.cb-creator-edu-row {
+  text-align: left;
+  padding: 12px 12px;
+  border-radius: 14px;
+
+  border: 1px solid rgba(17, 24, 39, 0.12);
+  background: rgba(17, 24, 39, 0.03);
+
+  cursor: pointer;
+}
+
+.cb-creator-edu-row:hover {
+  background: rgba(17, 24, 39, 0.05);
+}
+
+/* 선택 상태: Creator Studio의 네이비 버튼 톤을 “라이트 포인트”로 사용 */
+.cb-creator-edu-row--selected {
+  border-color: rgba(17, 24, 39, 0.42);
+  background: rgba(17, 24, 39, 0.06);
+}
+
+.cb-creator-edu-row__title {
+  font-size: 14px;
+  font-weight: 900;
+  color: rgba(17, 24, 39, 0.92);
+  margin-bottom: 6px;
+}
+
+.cb-creator-edu-row__meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: rgba(17, 24, 39, 0.62);
+}
+
+.cb-creator-edu-row__dot {
+  opacity: 0.55;
+}
+
+.cb-creator-edu-modal__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+
+  padding: 12px 0 0 0;
+  border-top: 1px solid rgba(17, 24, 39, 0.10);
+}
+
+/* 모바일 대응 */
+@media (max-width: 520px) {
+  .cb-creator-edu-modal-overlay {
+    padding: 14px;
+  }
+
+  .cb-creator-edu-modal {
+    width: 100%;
+    max-height: calc(100vh - 28px);
+    border-radius: 14px;
+  }
+
+  .cb-creator-edu-modal__head {
+    padding: 16px 14px 12px 14px;
+  }
+
+  .cb-creator-edu-modal__body {
+    padding: 12px 14px 14px 14px;
+  }
+
+  .cb-creator-edu-modal__search {
+    gap: 8px;
+  }
+
+  .cb-creator-edu-modal__reload {
+    padding: 0 10px;
+  }
 }

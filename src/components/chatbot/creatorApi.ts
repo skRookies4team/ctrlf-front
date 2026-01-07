@@ -46,12 +46,6 @@ const ADMIN_VIDEO_REVIEW_REQUEST_ENDPOINT = envStr(
   `${ADMIN_VIDEOS_ENDPOINT}/{videoId}/review-request`
 );
 
-// 일부 구현에서 POST /admin/videos/review-request { videoId, reviewType }가 있을 수 있어 fallback로 둠
-const ADMIN_VIDEO_REVIEW_REQUEST_FALLBACK_ENDPOINT = envStr(
-  "VITE_ADMIN_VIDEO_REVIEW_REQUEST_FALLBACK_ENDPOINT",
-  `${ADMIN_VIDEOS_ENDPOINT}/review-request`
-);
-
 // video service (user/common)
 const VIDEO_GET_ENDPOINT = envStr("VITE_VIDEO_GET_ENDPOINT", `${EDU_BASE}/video/{videoId}`);
 const VIDEO_SOURCESET_CREATE_ENDPOINT = envStr(
@@ -242,6 +236,28 @@ function normalizeEducationDetail(raw: unknown): AdminEducationDetail {
     (isRecord(raw) && isRecord(raw["data"]) ? readStr(raw["data"], "title") : undefined) ??
     "";
 
+  // departmentScope는 JSON string으로 올 수 있음 (스펙: docs/education_api_spec.md 2.1, 2.2)
+  const deptScopeRaw = isRecord(raw) ? raw["departmentScope"] : undefined;
+  let departmentScope: string[] = [];
+  
+  if (typeof deptScopeRaw === "string" && deptScopeRaw.trim()) {
+    // JSON string인 경우 파싱
+    try {
+      const parsed = JSON.parse(deptScopeRaw);
+      departmentScope = Array.isArray(parsed) 
+        ? parsed.filter(x => typeof x === "string" && x.trim().length > 0)
+        : [];
+    } catch {
+      // 파싱 실패 시 빈 배열
+      departmentScope = [];
+    }
+  } else if (Array.isArray(deptScopeRaw)) {
+    // 이미 배열인 경우 (호환성)
+    departmentScope = deptScopeRaw
+      .map((x) => (typeof x === "string" ? x : ""))
+      .filter(Boolean);
+  }
+
   return {
     id,
     title,
@@ -252,9 +268,7 @@ function normalizeEducationDetail(raw: unknown): AdminEducationDetail {
     passRatio: readNum(raw, "passRatio"),
     startAt: (readStr(raw, "startAt") ?? null) as string | null,
     endAt: (readStr(raw, "endAt") ?? null) as string | null,
-    departmentScope: (readArr(raw, "departmentScope") ?? [])
-      .map((x) => (typeof x === "string" ? x : ""))
-      .filter(Boolean),
+    departmentScope,
     createdAt: readStr(raw, "createdAt"),
     updatedAt: readStr(raw, "updatedAt"),
   };
@@ -352,14 +366,34 @@ export async function adminGetEducationsWithVideos(params?: {
       .map(normalizeVideoSummary)
       .filter((v): v is AdminVideoSummary => Boolean(v));
 
+    // departmentScope는 JSON string으로 올 수 있음 (스펙: docs/education_api_spec.md 2.1, 2.2)
+    const deptScopeRaw = node["departmentScope"] ?? node["deptIds"];
+    let departmentScope: string[] = [];
+    
+    if (typeof deptScopeRaw === "string" && deptScopeRaw.trim()) {
+      // JSON string인 경우 파싱
+      try {
+        const parsed = JSON.parse(deptScopeRaw);
+        departmentScope = Array.isArray(parsed) 
+          ? parsed.filter(x => typeof x === "string" && x.trim().length > 0)
+          : [];
+      } catch {
+        // 파싱 실패 시 빈 배열
+        departmentScope = [];
+      }
+    } else if (Array.isArray(deptScopeRaw)) {
+      // 이미 배열인 경우 (호환성)
+      departmentScope = deptScopeRaw
+        .map((x) => (typeof x === "string" ? x : ""))
+        .filter(Boolean);
+    }
+
     out.push({
       id: eduId,
       title: readStr(node, "title") ?? readStr(node, "eduTitle") ?? "교육",
       startAt: (readStr(node, "startAt") ?? null) as string | null,
       endAt: (readStr(node, "endAt") ?? null) as string | null,
-      departmentScope: (readArr(node, "departmentScope") ?? readArr(node, "deptIds") ?? [])
-        .map((x) => (typeof x === "string" ? x : ""))
-        .filter(Boolean),
+      departmentScope,
       videos,
     });
   }
@@ -384,20 +418,21 @@ export async function adminCreateVideo(payload: {
   isMandatory?: boolean;
   jobTrainingId?: string;
 }): Promise<{ id: string }> {
-  const eduId = (payload.eduId ?? payload.educationId ?? "").trim();
-  if (!eduId) throw new Error("adminCreateVideo: educationId(eduId)가 필요합니다.");
+  const educationId = (payload.educationId ?? payload.eduId ?? "").trim();
+  if (!educationId) throw new Error("adminCreateVideo: educationId가 필요합니다.");
 
-  // 컨트롤러와 동일하게 eduId를 우선 사용
+  // 백엔드 API 문서 기준: POST /admin/videos
+  // 필수: educationId, title
+  // 선택: departmentScope
   const body: Record<string, unknown> = {
-    eduId,
+    educationId,
     title: payload.title,
   };
 
-  if (payload.templateId) body.templateId = payload.templateId;
-  if (payload.departmentScope) body.departmentScope = payload.departmentScope;
-  if (payload.targetDeptIds) body.targetDeptIds = payload.targetDeptIds;
-  if (typeof payload.isMandatory === "boolean") body.isMandatory = payload.isMandatory;
-  if (payload.jobTrainingId) body.jobTrainingId = payload.jobTrainingId;
+  // 백엔드 API 문서에 정의된 필드만 전송
+  if (payload.departmentScope && payload.departmentScope.length > 0) {
+    body.departmentScope = payload.departmentScope;
+  }
 
   const raw = await safeFetchJson<unknown>(ADMIN_VIDEOS_ENDPOINT, {
     method: "POST",
@@ -427,38 +462,18 @@ export async function getVideo(videoId: string): Promise<VideoDetail> {
 
 /**
  * 검토 요청
- * - 기본: PUT /admin/videos/{videoId}/review-request body { stage: "SCRIPT"|"FINAL" }
- * - fallback: POST /admin/videos/review-request body { videoId, reviewType }
+ * - 백엔드 API 문서 기준: PUT /admin/videos/{videoId}/review-request (Body 없음)
+ * - 백엔드가 현재 상태를 보고 자동으로 다음 상태로 전환
+ *   - SCRIPT_READY → SCRIPT_REVIEW_REQUESTED (1차)
+ *   - READY → FINAL_REVIEW_REQUESTED (2차)
  */
-export async function requestVideoReview(videoId: string, reviewType: "SCRIPT" | "FINAL"): Promise<void> {
-  // 1) 기본
-  try {
-    const url = expandEndpoint(ADMIN_VIDEO_REVIEW_REQUEST_ENDPOINT, { videoId });
-    await safeFetchJson(url, {
-      method: "PUT",
-      ...jsonBody({ stage: reviewType }),
-    });
-    return;
-  } catch (e: unknown) {
-    // 2) fallback
-    const status =
-      isRecord(e) && typeof e["status"] === "number"
-        ? (e["status"] as number)
-        : isRecord(e) && isRecord(e["response"]) && typeof e["response"]["status"] === "number"
-          ? (e["response"]["status"] as number)
-          : undefined;
-
-    // 404/405는 엔드포인트/메서드 mismatch 가능성이 높음 → fallback 시도
-    if (status === 404 || status === 405) {
-      await safeFetchJson(ADMIN_VIDEO_REVIEW_REQUEST_FALLBACK_ENDPOINT, {
-        method: "POST",
-        ...jsonBody({ videoId, reviewType }),
-      });
-      return;
-    }
-
-    throw e;
-  }
+export async function requestVideoReview(videoId: string): Promise<void> {
+  const url = expandEndpoint(ADMIN_VIDEO_REVIEW_REQUEST_ENDPOINT, { videoId });
+  
+  // 백엔드 API 문서 기준: Body 없음
+  await safeFetchJson(url, {
+    method: "PUT",
+  });
 }
 
 // ------------------------------
@@ -550,7 +565,11 @@ export async function lookupScript(params: { videoId: string; educationId?: stri
 }
 
 export async function getScript(scriptId: string): Promise<CreatorScriptDetail> {
-  const url = expandEndpoint(SCRIPT_DETAIL_ENDPOINT, { scriptId });
+  const sid = scriptId?.trim() ?? "";
+  if (!sid || sid.length === 0) {
+    throw new Error("getScript: scriptId가 필요합니다.");
+  }
+  const url = expandEndpoint(SCRIPT_DETAIL_ENDPOINT, { scriptId: sid });
   return safeFetchJson<CreatorScriptDetail>(url, { method: "GET" });
 }
 
@@ -560,7 +579,11 @@ export async function getScript(scriptId: string): Promise<CreatorScriptDetail> 
  * - 2) 또는 string(script/rawPayload) payload
  */
 export async function putScript(scriptId: string, payload: CreatorPutScriptPayload): Promise<CreatorScriptDetail> {
-  const url = expandEndpoint(SCRIPT_DETAIL_ENDPOINT, { scriptId });
+  const sid = scriptId?.trim() ?? "";
+  if (!sid || sid.length === 0) {
+    throw new Error("putScript: scriptId가 필요합니다.");
+  }
+  const url = expandEndpoint(SCRIPT_DETAIL_ENDPOINT, { scriptId: sid });
 
   // payload 형태에 따라 그대로 전송 (설계안/구현 편차 흡수)
   return safeFetchJson<CreatorScriptDetail>(url, {
@@ -582,14 +605,16 @@ export async function startVideoJob(payload: {
   scriptId: string;
 }): Promise<string> {
   const eduId = (payload.eduId ?? payload.educationId ?? "").trim();
-  if (!eduId) throw new Error("startVideoJob: educationId(eduId)가 필요합니다.");
+  if (!eduId) throw new Error("startVideoJob: eduId가 필요합니다.");
 
+  // 백엔드 API 문서 기준: POST /video/job
+  // 필수: eduId, scriptId, videoId
   const raw = await safeFetchJson<unknown>(VIDEO_JOB_CREATE_ENDPOINT, {
     method: "POST",
     ...jsonBody({
       eduId,
-      videoId: payload.videoId,
       scriptId: payload.scriptId,
+      videoId: payload.videoId,
     }),
   });
 

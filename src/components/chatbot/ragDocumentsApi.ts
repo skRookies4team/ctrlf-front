@@ -11,9 +11,11 @@ function jsonBody(body: unknown): RequestInit {
   return { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) };
 }
 
-function pickId(obj: any, keys: string[]): string | null {
+function pickId(obj: unknown, keys: string[]): string | null {
+  if (!obj || typeof obj !== "object") return null;
+  const record = obj as Record<string, unknown>;
   for (const k of keys) {
-    const v = obj?.[k];
+    const v = record[k];
     if (typeof v === "string" && v.trim()) return v;
     if (typeof v === "number" && Number.isFinite(v)) return String(v);
   }
@@ -32,7 +34,7 @@ export async function uploadDocument(payload: {
   fileUrl: string;
   uploaderUuid?: string;
 }): Promise<RagUploadResponse> {
-  const res: any = await fetchJson(`${INFRA_BASE}/rag/documents/upload`, {
+  const res = await fetchJson<Record<string, unknown>>(`${INFRA_BASE}/rag/documents/upload`, {
     method: "POST",
     ...jsonBody(payload),
   });
@@ -47,22 +49,23 @@ export async function uploadDocument(payload: {
 }
 
 export async function getDocumentStatus(documentId: string): Promise<RagDocStatusResponse> {
-  const res: any = await fetchJson(
+  const res = await fetchJson<Record<string, unknown>>(
     `${INFRA_BASE}/rag/documents/${encodeURIComponent(documentId)}/status`,
     { method: "GET" }
   );
 
   // 가능한 응답 키들 모두 흡수
+  const data = res?.data && typeof res.data === "object" ? (res.data as Record<string, unknown>) : null;
   const status =
     (typeof res?.status === "string" && res.status) ||
     (typeof res?.state === "string" && res.state) ||
-    (typeof res?.data?.status === "string" && res.data.status) ||
+    (data && typeof data.status === "string" ? data.status : null) ||
     "UNKNOWN";
 
   const errorMessage =
     (typeof res?.errorMessage === "string" && res.errorMessage) ||
     (typeof res?.message === "string" && res.message) ||
-    (typeof res?.data?.errorMessage === "string" && res.data.errorMessage) ||
+    (data && typeof data.errorMessage === "string" ? data.errorMessage : null) ||
     null;
 
   return { status, errorMessage };

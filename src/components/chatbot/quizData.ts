@@ -5,7 +5,6 @@ export type QuizCourse = {
   title: string;
   category?: string | null;
   eduType?: string | null;
-  educationStatus?: string | null;
 
   // UI 계산 필드
   unlocked: boolean; // 교육 이수 완료(혹은 퀴즈 가능 상태)
