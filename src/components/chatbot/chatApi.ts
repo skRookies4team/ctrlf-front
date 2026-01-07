@@ -1,6 +1,7 @@
 // src/components/chatbot/chatApi.ts
 import keycloak from "../../keycloak";
 import type {
+  ChatAction,
   ChatRequest,
   FeedbackValue,
   ChatSendResult,
@@ -504,6 +505,13 @@ type ChatSessionResponse = {
 type ChatMessageSendRequest = {
   sessionId: string; // uuid
   content: string;
+  /**
+   * A/B 테스트 임베딩 모델 선택 (선택)
+   * - "openai": text-embedding-3-large (기본값)
+   * - "sroberta": ko-sroberta-multitask
+   * - null/undefined: 기본값(openai) 사용
+   */
+  model?: string | null;
 };
 
 /**
@@ -514,6 +522,8 @@ type ChatMessageSendResponse = {
   role: string;
   content: string;
   createdAt: string;
+  /** AI 응답에 포함된 프론트엔드 액션 정보 */
+  action?: ChatAction;
 };
 
 /**
@@ -607,7 +617,50 @@ async function sendChatMessage(
       ? data["createdAt"]
       : new Date().toISOString();
 
-  return { messageId, role, content, createdAt };
+  // AI 응답의 meta.action 또는 action 필드에서 액션 정보 추출
+  let action: ChatAction | undefined;
+  if (isRecord(data)) {
+    const metaObj = data["meta"];
+    const actionData = isRecord(metaObj)
+      ? metaObj["action"]
+      : data["action"];
+
+    if (isRecord(actionData) && typeof actionData["type"] === "string") {
+      action = {
+        type: actionData["type"] as ChatAction["type"],
+        educationId:
+          nonEmptyString(actionData["education_id"]) ??
+          nonEmptyString(actionData["educationId"]) ??
+          undefined,
+        videoId:
+          nonEmptyString(actionData["video_id"]) ??
+          nonEmptyString(actionData["videoId"]) ??
+          undefined,
+        resumePositionSeconds:
+          typeof actionData["resume_position_seconds"] === "number"
+            ? actionData["resume_position_seconds"]
+            : typeof actionData["resumePositionSeconds"] === "number"
+            ? actionData["resumePositionSeconds"]
+            : undefined,
+        educationTitle:
+          nonEmptyString(actionData["education_title"]) ??
+          nonEmptyString(actionData["educationTitle"]) ??
+          undefined,
+        videoTitle:
+          nonEmptyString(actionData["video_title"]) ??
+          nonEmptyString(actionData["videoTitle"]) ??
+          undefined,
+        progressPercent:
+          typeof actionData["progress_percent"] === "number"
+            ? actionData["progress_percent"]
+            : typeof actionData["progressPercent"] === "number"
+            ? actionData["progressPercent"]
+            : undefined,
+      };
+    }
+  }
+
+  return { messageId, role, content, createdAt, action };
 }
 
 /**
@@ -665,10 +718,14 @@ export async function sendChatToAI(req: ChatRequest): Promise<ChatSendResult> {
     setSessionMap(userUuid, clientSessionKey, created.id);
   }
 
+  // A/B 테스트: req.model 추출
+  const abModel = (req as unknown as { model?: string | null }).model ?? null;
+
   const sent = await sendChatMessage(
     {
       sessionId: serverSessionId,
       content: lastUser,
+      model: abModel,
     },
     token
   );
@@ -679,6 +736,7 @@ export async function sendChatToAI(req: ChatRequest): Promise<ChatSendResult> {
     role: "assistant",
     content: sent.content || "응답이 비어 있습니다.",
     createdAt: sent.createdAt,
+    action: sent.action,
   };
 }
 
@@ -1403,11 +1461,15 @@ export async function sendChatToAIStream(
     setSessionMap(userUuid, clientSessionKey, created.id);
   }
 
+  // A/B 테스트: req.model 추출
+  const abModel = (req as unknown as { model?: string | null }).model ?? null;
+
   // 2) 먼저 POST /chat/messages 로 messageId 확보
   const sent = await sendChatMessage(
     {
       sessionId: serverSessionId,
       content: lastUser,
+      model: abModel,
     },
     token
   );

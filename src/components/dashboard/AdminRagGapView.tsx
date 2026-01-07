@@ -1,7 +1,7 @@
 // src/components/chatbot/AdminRagGapView.tsx
 import React, { useMemo, useState, useLayoutEffect, useRef } from "react";
 import type { CommonFilterState, PeriodPreset } from "./adminFilterTypes";
-import { RAG_GAP_ITEMS_MOCK } from "./adminRagGapMocks";
+import { RAG_GAP_ITEMS_MOCK } from "../chatbot/adminRagGapMocks";
 import type {
   RagGapItem,
   SortMode,
@@ -10,7 +10,7 @@ import type {
   UserRole,
   RagGapType,
   RagGapPriority,
-} from "./adminRagGapTypes";
+} from "../chatbot/adminRagGapTypes";
 
 interface AdminRagGapViewProps {
   filterValue: CommonFilterState;
@@ -106,7 +106,9 @@ const AdminRagGapView: React.FC<AdminRagGapViewProps> = ({ filterValue }) => {
   const listWrapperRef = useRef<HTMLDivElement | null>(null);
   const detailRef = useRef<HTMLElement | null>(null);
 
-  const effectiveDomainId = (domainId ?? "ALL") as RagGapItem["domainId"] | "ALL";
+  const effectiveDomainId = (domainId ?? "ALL") as
+    | RagGapItem["domainId"]
+    | "ALL";
   const effectiveRouteId = routeId ?? "ALL";
   const effectiveModelId = modelId ?? "ALL";
   const periodLabel =
@@ -127,8 +129,7 @@ const AdminRagGapView: React.FC<AdminRagGapViewProps> = ({ filterValue }) => {
     let threshold: Date | null = null;
     if (period === "7d" || period === "30d" || period === "90d") {
       const now = new Date(); // 실제 오늘 날짜 기준
-      const days =
-        period === "7d" ? 7 : period === "30d" ? 30 : 90;
+      const days = period === "7d" ? 7 : period === "30d" ? 30 : 90;
       threshold = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
     }
 
@@ -136,16 +137,17 @@ const AdminRagGapView: React.FC<AdminRagGapViewProps> = ({ filterValue }) => {
       // 1) 기간 필터: lastAskedAt 기준
       if (threshold) {
         const lastAsked = new Date(item.lastAskedAt.replace(" ", "T"));
-        if (
-          Number.isNaN(lastAsked.getTime()) ||
-          lastAsked < threshold
-        ) {
+        if (Number.isNaN(lastAsked.getTime()) || lastAsked < threshold) {
           return false;
         }
       }
 
       // 2) 공통 필터 (상단 AdminFilterBar)
-      if (departmentId && departmentId !== "ALL" && item.deptCode !== departmentId) {
+      if (
+        departmentId &&
+        departmentId !== "ALL" &&
+        item.deptCode !== departmentId
+      ) {
         return false;
       }
       if (effectiveDomainId !== "ALL" && item.domainId !== effectiveDomainId) {
@@ -216,8 +218,7 @@ const AdminRagGapView: React.FC<AdminRagGapViewProps> = ({ filterValue }) => {
       : sortedItems.find((item) => item.id === effectiveSelectedId) ?? null;
 
   // 현재 선택된 아이템에 대해 전문이 펼쳐져 있는지 여부
-  const isAnswerExpanded =
-    !!selectedItem && expandedItemId === selectedItem.id;
+  const isAnswerExpanded = !!selectedItem && expandedItemId === selectedItem.id;
 
   // 현재 선택된 아이템에 대한 관리자 태깅/메모 상태
   const currentAdminState: AdminLocalState | undefined = selectedItem
@@ -226,7 +227,7 @@ const AdminRagGapView: React.FC<AdminRagGapViewProps> = ({ filterValue }) => {
   const currentStatus: AdminLocalState["status"] =
     currentAdminState?.status ?? "none";
   const currentNotes: string =
-    currentAdminState?.notes ?? (selectedItem?.adminNotes ?? "");
+    currentAdminState?.notes ?? selectedItem?.adminNotes ?? "";
 
   // 우측 상세 카드 높이에 맞춰 좌측 리스트 max-height 동기화
   useLayoutEffect(() => {
@@ -244,11 +245,9 @@ const AdminRagGapView: React.FC<AdminRagGapViewProps> = ({ filterValue }) => {
   // === 상단 요약 통계 ===
   const totalCandidates = filteredItems.length;
   const highPriorityCount = filteredItems.filter(
-    (i) => i.priority === "HIGH",
+    (i) => i.priority === "HIGH"
   ).length;
-  const noDocCount = filteredItems.filter(
-    (i) => i.gapType === "NO_DOC",
-  ).length;
+  const noDocCount = filteredItems.filter((i) => i.gapType === "NO_DOC").length;
 
   // 카테고리(문서 영역)별 집계
   const categoryStats = useMemo(() => {
@@ -276,7 +275,7 @@ const AdminRagGapView: React.FC<AdminRagGapViewProps> = ({ filterValue }) => {
 
   const toggleProposalSelection = (id: string) => {
     setProposalSelection((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
     );
   };
 
@@ -299,7 +298,7 @@ const AdminRagGapView: React.FC<AdminRagGapViewProps> = ({ filterValue }) => {
 
   const updateAdminState = (
     item: RagGapItem,
-    partial: Partial<AdminLocalState>,
+    partial: Partial<AdminLocalState>
   ) => {
     setAdminStates((prev) => {
       const prevForId = prev[item.id] ?? {
@@ -392,9 +391,7 @@ const AdminRagGapView: React.FC<AdminRagGapViewProps> = ({ filterValue }) => {
             <select
               className="cb-admin-raggap-filter-select"
               value={roleFilter}
-              onChange={(e) =>
-                setRoleFilter(e.target.value as RoleFilter)
-              }
+              onChange={(e) => setRoleFilter(e.target.value as RoleFilter)}
             >
               {ROLE_FILTER_OPTIONS.map((opt) => (
                 <option key={opt.value} value={opt.value}>
@@ -409,9 +406,7 @@ const AdminRagGapView: React.FC<AdminRagGapViewProps> = ({ filterValue }) => {
             <select
               className="cb-admin-raggap-filter-select"
               value={intentFilter}
-              onChange={(e) =>
-                setIntentFilter(e.target.value as IntentFilter)
-              }
+              onChange={(e) => setIntentFilter(e.target.value as IntentFilter)}
             >
               {intentOptions.map((intent) => (
                 <option key={intent} value={intent}>
@@ -422,9 +417,7 @@ const AdminRagGapView: React.FC<AdminRagGapViewProps> = ({ filterValue }) => {
           </div>
 
           <div className="cb-admin-raggap-filter-group">
-            <span className="cb-admin-raggap-filter-label">
-              최소 발생 횟수
-            </span>
+            <span className="cb-admin-raggap-filter-label">최소 발생 횟수</span>
             <input
               type="number"
               min={1}
@@ -441,9 +434,7 @@ const AdminRagGapView: React.FC<AdminRagGapViewProps> = ({ filterValue }) => {
                 type="button"
                 className={
                   "cb-admin-chip" +
-                  (sortMode === "lastAskedDesc"
-                    ? " cb-admin-chip--active"
-                    : "")
+                  (sortMode === "lastAskedDesc" ? " cb-admin-chip--active" : "")
                 }
                 onClick={() => setSortMode("lastAskedDesc")}
               >
@@ -618,9 +609,7 @@ const AdminRagGapView: React.FC<AdminRagGapViewProps> = ({ filterValue }) => {
                   </h5>
                   <div className="cb-admin-raggap-grid">
                     <div>
-                      <div className="cb-admin-raggap-label">
-                        Route / 모델
-                      </div>
+                      <div className="cb-admin-raggap-label">Route / 모델</div>
                       <div className="cb-admin-raggap-value">
                         {selectedItem.routeId} · {selectedItem.modelName}
                       </div>
@@ -667,7 +656,7 @@ const AdminRagGapView: React.FC<AdminRagGapViewProps> = ({ filterValue }) => {
                           onClick={() => {
                             if (!selectedItem) return;
                             setExpandedItemId((prev) =>
-                              prev === selectedItem.id ? null : selectedItem.id,
+                              prev === selectedItem.id ? null : selectedItem.id
                             );
                           }}
                         >

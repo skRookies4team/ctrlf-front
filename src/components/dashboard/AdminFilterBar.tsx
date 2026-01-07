@@ -56,37 +56,37 @@ const AdminFilterBar: React.FC<AdminFilterBarProps> = ({
   };
 
   const handleDeptChange: React.ChangeEventHandler<HTMLSelectElement> = (
-    event,
+    event
   ) => {
     onChange({ ...value, departmentId: event.target.value });
   };
 
   const handleDomainChange: React.ChangeEventHandler<HTMLSelectElement> = (
-    event,
+    event
   ) => {
     onChange({ ...value, domainId: event.target.value });
   };
 
   const handleRouteChange: React.ChangeEventHandler<HTMLSelectElement> = (
-    event,
+    event
   ) => {
     onChange({ ...value, routeId: event.target.value });
   };
 
   const handleModelChange: React.ChangeEventHandler<HTMLSelectElement> = (
-    event,
+    event
   ) => {
     onChange({ ...value, modelId: event.target.value });
   };
 
   const handleHasPiiOnlyChange: React.ChangeEventHandler<HTMLInputElement> = (
-    event,
+    event
   ) => {
     onChange({ ...value, hasPiiOnly: event.target.checked });
   };
 
   const handleOnlyErrorChange: React.ChangeEventHandler<HTMLInputElement> = (
-    event,
+    event
   ) => {
     onChange({ ...value, onlyError: event.target.checked });
   };
@@ -235,9 +235,7 @@ const AdminFilterBar: React.FC<AdminFilterBarProps> = ({
                 onChange={handleOnlyErrorChange}
               />
               <span className="cb-admin-flag-toggle-knob" />
-              <span className="cb-admin-flag-toggle-label">
-                에러 로그만
-              </span>
+              <span className="cb-admin-flag-toggle-label">에러 로그만</span>
             </label>
           </div>
         </div>
