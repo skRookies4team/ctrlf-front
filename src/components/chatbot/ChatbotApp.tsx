@@ -182,7 +182,8 @@ async function waitForAuthToken(opts?: {
   const start = Date.now();
   let lastUpdateAttempt = 0;
 
-  const sleep = (ms: number) => new Promise<void>((r) => window.setTimeout(r, ms));
+  const sleep = (ms: number) =>
+    new Promise<void>((r) => window.setTimeout(r, ms));
 
   while (Date.now() - start < timeoutMs) {
     if (!keycloak?.authenticated) {
@@ -251,7 +252,9 @@ async function buildAuthHeaders(): Promise<Record<string, string>> {
 async function apiFetchJson<T>(
   url: string,
   init?: RequestInit
-): Promise<{ ok: true; data: T } | { ok: false; status: number; text: string }> {
+): Promise<
+  { ok: true; data: T } | { ok: false; status: number; text: string }
+> {
   const authHeaders = await buildAuthHeaders();
   const mergedHeaders = mergeHeaders(authHeaders, init?.headers);
 
@@ -329,7 +332,9 @@ async function fetchServerSessionMeta(serverSessionId: string): Promise<{
   createdAt: number;
   updatedAt: number;
 } | null> {
-  const directCandidates = [`/api/chat/sessions/${encodeURIComponent(serverSessionId)}`];
+  const directCandidates = [
+    `/api/chat/sessions/${encodeURIComponent(serverSessionId)}`,
+  ];
 
   for (const url of directCandidates) {
     const r = await apiFetchJson<ServerSessionListItem>(url, { method: "GET" });
@@ -347,7 +352,9 @@ async function fetchServerSessionMeta(serverSessionId: string): Promise<{
   }
 
   const listUrl = `/api/chat/sessions?size=100`;
-  const lr = await apiFetchJson<ServerSessionListResponse>(listUrl, { method: "GET" });
+  const lr = await apiFetchJson<ServerSessionListResponse>(listUrl, {
+    method: "GET",
+  });
   if (!lr.ok) return null;
 
   const list = lr.data?.sessions ?? lr.data?.items ?? [];
@@ -378,17 +385,18 @@ async function fetchServerSessionHistory(serverSessionId: string): Promise<{
     serverMessageId?: string;
   }>;
 } | null> {
-  const meta =
-    (await fetchServerSessionMeta(serverSessionId)) ?? {
-      title: "서버 대화",
-      domain: "general" as ChatDomain,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    };
+  const meta = (await fetchServerSessionMeta(serverSessionId)) ?? {
+    title: "서버 대화",
+    domain: "general" as ChatDomain,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
 
   // 스펙 엔드포인트 시도: GET /api/chat/sessions/{sessionId}/history
   // 스펙 응답: { sessionId, title, messages: [...] }
-  const historyUrl = `/api/chat/sessions/${encodeURIComponent(serverSessionId)}/history`;
+  const historyUrl = `/api/chat/sessions/${encodeURIComponent(
+    serverSessionId
+  )}/history`;
   const historyResponse = await apiFetchJson<{
     sessionId?: string;
     title?: string;
@@ -398,7 +406,7 @@ async function fetchServerSessionHistory(serverSessionId: string): Promise<{
   if (historyResponse.ok && historyResponse.data) {
     const historyData = historyResponse.data;
     const messages = pickMessagesArray(historyData);
-    
+
     if (messages.length > 0) {
       const now = Date.now();
       const normalized = messages
@@ -406,7 +414,10 @@ async function fetchServerSessionHistory(serverSessionId: string): Promise<{
         .map((m, idx) => {
           const role = normalizeRole(m.role ?? m.sender);
           const content = trimStr(m.content ?? m.text ?? "");
-          const created = toEpochMs(m.createdAt ?? m.created_at ?? m.timestamp, now + idx);
+          const created = toEpochMs(
+            m.createdAt ?? m.created_at ?? m.timestamp,
+            now + idx
+          );
 
           return {
             role,
@@ -417,7 +428,9 @@ async function fetchServerSessionHistory(serverSessionId: string): Promise<{
         });
 
       const updatedAt =
-        normalized.length > 0 ? normalized[normalized.length - 1].createdAt : meta.updatedAt;
+        normalized.length > 0
+          ? normalized[normalized.length - 1].createdAt
+          : meta.updatedAt;
 
       // 스펙 응답에서 title이 있으면 사용
       const finalTitle = trimStr(historyData.title) || meta.title;
@@ -446,10 +459,12 @@ async function fetchServerSessionHistory(serverSessionId: string): Promise<{
 
     const url =
       cursor && trimStr(cursor)
-        ? `/chat/sessions/${encodeURIComponent(serverSessionId)}/messages?size=${pageSize}&cursor=${encodeURIComponent(
-          cursor
-        )}`
-        : `/chat/sessions/${encodeURIComponent(serverSessionId)}/messages?size=${pageSize}`;
+        ? `/chat/sessions/${encodeURIComponent(
+            serverSessionId
+          )}/messages?size=${pageSize}&cursor=${encodeURIComponent(cursor)}`
+        : `/chat/sessions/${encodeURIComponent(
+            serverSessionId
+          )}/messages?size=${pageSize}`;
 
     const r = await apiFetchJson<ServerMessagesPage>(url, { method: "GET" });
     if (!r.ok) {
@@ -465,7 +480,9 @@ async function fetchServerSessionHistory(serverSessionId: string): Promise<{
     const chunk = pickMessagesArray(page);
     all.push(...chunk);
 
-    const nextCursor = (page.nextCursor ?? page.cursor ?? null) as string | null;
+    const nextCursor = (page.nextCursor ?? page.cursor ?? null) as
+      | string
+      | null;
     const hn = (page.hasNext ?? page.has_next ?? false) as boolean;
 
     cursor = nextCursor && trimStr(nextCursor) ? asString(nextCursor) : null;
@@ -479,7 +496,10 @@ async function fetchServerSessionHistory(serverSessionId: string): Promise<{
     .map((m, idx) => {
       const role = normalizeRole(m.role ?? m.sender);
       const content = trimStr(m.content ?? m.text ?? "");
-      const created = toEpochMs(m.createdAt ?? m.created_at ?? m.timestamp, now + idx);
+      const created = toEpochMs(
+        m.createdAt ?? m.created_at ?? m.timestamp,
+        now + idx
+      );
 
       return {
         role,
@@ -490,7 +510,9 @@ async function fetchServerSessionHistory(serverSessionId: string): Promise<{
     });
 
   const updatedAt =
-    normalized.length > 0 ? normalized[normalized.length - 1].createdAt : meta.updatedAt;
+    normalized.length > 0
+      ? normalized[normalized.length - 1].createdAt
+      : meta.updatedAt;
 
   return {
     serverSessionId,
@@ -684,9 +706,13 @@ const ChatbotApp: React.FC<ChatbotAppProps> = ({
         const dy = event.clientY - resizeState.startY;
 
         const maxWidth = Math.max(MIN_WIDTH, window.innerWidth - padding * 2);
-        const maxHeight = Math.max(MIN_HEIGHT, window.innerHeight - padding * 2);
+        const maxHeight = Math.max(
+          MIN_HEIGHT,
+          window.innerHeight - padding * 2
+        );
 
-        const { startWidth, startHeight, startTop, startLeft, dir } = resizeState;
+        const { startWidth, startHeight, startTop, startLeft, dir } =
+          resizeState;
 
         let width = startWidth;
         let height = startHeight;
@@ -846,20 +872,23 @@ const ChatbotApp: React.FC<ChatbotAppProps> = ({
     []
   );
 
-  const upsertSessionWithFifo = useCallback((_prev: ChatSession[], next: ChatSession[]) => {
-    if (next.length <= MAX_SESSIONS) return next;
+  const upsertSessionWithFifo = useCallback(
+    (_prev: ChatSession[], next: ChatSession[]) => {
+      if (next.length <= MAX_SESSIONS) return next;
 
-    let oldestIndex = 0;
-    for (let i = 1; i < next.length; i += 1) {
-      if (next[i].createdAt < next[oldestIndex].createdAt) {
-        oldestIndex = i;
+      let oldestIndex = 0;
+      for (let i = 1; i < next.length; i += 1) {
+        if (next[i].createdAt < next[oldestIndex].createdAt) {
+          oldestIndex = i;
+        }
       }
-    }
 
-    const pruned = [...next];
-    pruned.splice(oldestIndex, 1);
-    return pruned;
-  }, []);
+      const pruned = [...next];
+      pruned.splice(oldestIndex, 1);
+      return pruned;
+    },
+    []
+  );
 
   const handleHydrateServerSession = useCallback(
     (payload: {
@@ -876,10 +905,13 @@ const ChatbotApp: React.FC<ChatbotAppProps> = ({
       }>;
       raw?: unknown;
     }) => {
-      if (!payload?.serverSessionId || !isUuidLike(payload.serverSessionId)) return;
+      if (!payload?.serverSessionId || !isUuidLike(payload.serverSessionId))
+        return;
 
       setSessions((prev) => {
-        const byServer = prev.find((s) => s.serverId === payload.serverSessionId);
+        const byServer = prev.find(
+          (s) => s.serverId === payload.serverSessionId
+        );
         const byIdFallback = prev.find((s) => s.id === payload.serverSessionId);
         const target = byServer ?? byIdFallback ?? null;
 
@@ -916,10 +948,13 @@ const ChatbotApp: React.FC<ChatbotAppProps> = ({
     [upsertSessionWithFifo]
   );
 
-  const getServerSessionIdForLocalSession = useCallback((localSessionId: string) => {
-    const s = sessionsRef.current.find((x) => x.id === localSessionId);
-    return s?.serverId;
-  }, []);
+  const getServerSessionIdForLocalSession = useCallback(
+    (localSessionId: string) => {
+      const s = sessionsRef.current.find((x) => x.id === localSessionId);
+      return s?.serverId;
+    },
+    []
+  );
 
   const ensureHydratedByServerId = useCallback(
     async (serverSessionId: string) => {
@@ -946,7 +981,8 @@ const ChatbotApp: React.FC<ChatbotAppProps> = ({
       // (핵심) 이미 로컬에 있으면 그대로 사용
       const existing =
         findLocalSessionByServerId(serverSessionId, sessionsRef.current) ??
-        (sessionsRef.current.find((s) => s.id === serverSessionId) ?? null);
+        sessionsRef.current.find((s) => s.id === serverSessionId) ??
+        null;
 
       if (existing) {
         setActiveSessionId(existing.id);
@@ -974,12 +1010,18 @@ const ChatbotApp: React.FC<ChatbotAppProps> = ({
         serverId: serverSessionId,
       };
 
-      setSessions((prev) => upsertSessionWithFifo(prev, [placeholder, ...prev]));
+      setSessions((prev) =>
+        upsertSessionWithFifo(prev, [placeholder, ...prev])
+      );
       setActiveSessionId(placeholderId);
 
       void ensureHydratedByServerId(serverSessionId);
     },
-    [ensureHydratedByServerId, findLocalSessionByServerId, upsertSessionWithFifo]
+    [
+      ensureHydratedByServerId,
+      findLocalSessionByServerId,
+      upsertSessionWithFifo,
+    ]
   );
 
   // ====== 로컬 세션 관리 ======
@@ -1024,10 +1066,12 @@ const ChatbotApp: React.FC<ChatbotAppProps> = ({
 
   const handleDeleteSession = (sessionId: string) => {
     const byLocal = sessionsRef.current.find((s) => s.id === sessionId) ?? null;
-    const byServer = sessionsRef.current.find((s) => s.serverId === sessionId) ?? null;
+    const byServer =
+      sessionsRef.current.find((s) => s.serverId === sessionId) ?? null;
 
     const target = byLocal ?? byServer;
-    const serverSessionId = target?.serverId ?? (isUuidLike(sessionId) ? sessionId : undefined);
+    const serverSessionId =
+      target?.serverId ?? (isUuidLike(sessionId) ? sessionId : undefined);
 
     void (async () => {
       if (serverSessionId) {
@@ -1091,9 +1135,9 @@ const ChatbotApp: React.FC<ChatbotAppProps> = ({
 
   const faqHomeRef = useRef<FaqHomeItem[]>([]);
   const faqIndexByIdRef = useRef<Map<string, FaqItem>>(new Map());
-  const faqHomeByIndexRef = useRef<Map<number, { faqId: string; domain: ChatServiceDomain }>>(
-    new Map()
-  );
+  const faqHomeByIndexRef = useRef<
+    Map<number, { faqId: string; domain: ChatServiceDomain }>
+  >(new Map());
   const faqListCacheRef = useRef<Map<string, FaqItem[]>>(new Map());
 
   // 토큰 준비 레이스를 잡기 위한 auth-ready 트리거
@@ -1135,7 +1179,10 @@ const ChatbotApp: React.FC<ChatbotAppProps> = ({
         setFaqHome(safe);
         faqHomeRef.current = safe;
 
-        const map = new Map<number, { faqId: string; domain: ChatServiceDomain }>();
+        const map = new Map<
+          number,
+          { faqId: string; domain: ChatServiceDomain }
+        >();
         safe.forEach((it, idx) => {
           map.set(idx, { faqId: it.faqId, domain: it.domain });
         });
@@ -1205,7 +1252,8 @@ const ChatbotApp: React.FC<ChatbotAppProps> = ({
           const msg: ChatMessage = {
             id: makeLocalId("local-msg"),
             role: "assistant",
-            content: "FAQ 정보를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.",
+            content:
+              "FAQ 정보를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.",
             createdAt: now,
           };
           setSessions((prev) =>
@@ -1230,7 +1278,9 @@ const ChatbotApp: React.FC<ChatbotAppProps> = ({
         // 3) domain을 모르면 home의 도메인들을 순회하며 찾기
         if (!item) {
           const home = faqHomeRef.current ?? [];
-          const domains = Array.from(new Set(home.map((h) => String(h.domain).toUpperCase())));
+          const domains = Array.from(
+            new Set(home.map((h) => String(h.domain).toUpperCase()))
+          );
           for (const d of domains) {
             const list = await ensureFaqListCached(d as ChatServiceDomain);
             const found = list.find((x) => x.id === faqId);
@@ -1266,7 +1316,9 @@ const ChatbotApp: React.FC<ChatbotAppProps> = ({
           prev.map((session) => {
             if (session.id !== activeSessionId) return session;
 
-            const hasUserMessage = session.messages.some((m) => m.role === "user");
+            const hasUserMessage = session.messages.some(
+              (m) => m.role === "user"
+            );
             const isDefaultTitle = session.title.startsWith("새 채팅");
 
             const nextTitle =
@@ -1313,11 +1365,14 @@ const ChatbotApp: React.FC<ChatbotAppProps> = ({
 
     const currentSessions = sessionsRef.current;
     const sessionIdForSend =
-      activeSessionId ?? (currentSessions.length > 0 ? currentSessions[0].id : null);
+      activeSessionId ??
+      (currentSessions.length > 0 ? currentSessions[0].id : null);
     if (!sessionIdForSend) return;
 
     const now = Date.now();
-    const currentSession = currentSessions.find((s) => s.id === sessionIdForSend);
+    const currentSession = currentSessions.find(
+      (s) => s.id === sessionIdForSend
+    );
     if (!currentSession) return;
 
     const userMessage: ChatMessage = {
@@ -1327,21 +1382,25 @@ const ChatbotApp: React.FC<ChatbotAppProps> = ({
       createdAt: now,
     };
 
-    const hasUserMessage = currentSession.messages.some((m) => m.role === "user");
+    const hasUserMessage = currentSession.messages.some(
+      (m) => m.role === "user"
+    );
     const isDefaultTitle = currentSession.title.startsWith("새 채팅");
 
     const nextTitle =
-      !hasUserMessage && isDefaultTitle ? buildSessionTitleFromMessage(trimmed) : currentSession.title;
+      !hasUserMessage && isDefaultTitle
+        ? buildSessionTitleFromMessage(trimmed)
+        : currentSession.title;
 
     setSessions((prev) =>
       prev.map((session) =>
         session.id === sessionIdForSend
           ? {
-            ...session,
-            title: nextTitle,
-            messages: [...session.messages, userMessage],
-            updatedAt: now,
-          }
+              ...session,
+              title: nextTitle,
+              messages: [...session.messages, userMessage],
+              updatedAt: now,
+            }
           : session
       )
     );
@@ -1351,7 +1410,8 @@ const ChatbotApp: React.FC<ChatbotAppProps> = ({
       const suggestionMessage: ChatMessage = {
         id: makeLocalId("local-msg"),
         role: "assistant",
-        content: "신고 절차를 알려드릴게요! 부적절한 상황이라면 지금 바로 신고할 수 있어요.",
+        content:
+          "신고 절차를 알려드릴게요! 부적절한 상황이라면 지금 바로 신고할 수 있어요.",
         createdAt: suggestionTime,
         kind: "reportSuggestion",
       };
@@ -1360,10 +1420,10 @@ const ChatbotApp: React.FC<ChatbotAppProps> = ({
         prev.map((session) =>
           session.id === sessionIdForSend
             ? {
-              ...session,
-              messages: [...session.messages, suggestionMessage],
-              updatedAt: suggestionTime,
-            }
+                ...session,
+                messages: [...session.messages, suggestionMessage],
+                updatedAt: suggestionTime,
+              }
             : session
         )
       );
@@ -1387,7 +1447,8 @@ const ChatbotApp: React.FC<ChatbotAppProps> = ({
       // 기본값을 true로: env 미설정이어도 스트리밍 경로(sendChatToAIStream)를 반드시 탄다.
       // 서버가 스트림을 못 주면 chatApi.ts에서 자동 fallback 처리한다.
       const ENABLE_CHAT_STREAMING =
-        String(import.meta.env.VITE_CHAT_STREAMING ?? "true").toLowerCase() === "true";
+        String(import.meta.env.VITE_CHAT_STREAMING ?? "true").toLowerCase() ===
+        "true";
       try {
         setIsSending(true);
 
@@ -1407,10 +1468,10 @@ const ChatbotApp: React.FC<ChatbotAppProps> = ({
             prev.map((session) =>
               session.id === sessionIdForSend
                 ? {
-                  ...session,
-                  messages: [...session.messages, placeholder],
-                  updatedAt: placeholderTime,
-                }
+                    ...session,
+                    messages: [...session.messages, placeholder],
+                    updatedAt: placeholderTime,
+                  }
                 : session
             )
           );
@@ -1430,7 +1491,11 @@ const ChatbotApp: React.FC<ChatbotAppProps> = ({
                     m.id === placeholderId ? { ...m, content: acc } : m
                   );
 
-                  return { ...session, messages: nextMessages, updatedAt: Date.now() };
+                  return {
+                    ...session,
+                    messages: nextMessages,
+                    updatedAt: Date.now(),
+                  };
                 })
               );
             },
@@ -1442,7 +1507,11 @@ const ChatbotApp: React.FC<ChatbotAppProps> = ({
 
                   const nextMessages = session.messages.map((m) =>
                     m.id === placeholderId
-                      ? { ...m, content: f.content || acc, serverId: f.messageId }
+                      ? {
+                          ...m,
+                          content: f.content || acc,
+                          serverId: f.messageId,
+                        }
                       : m
                   );
 
@@ -1518,7 +1587,8 @@ const ChatbotApp: React.FC<ChatbotAppProps> = ({
         const errorMessage: ChatMessage = {
           id: makeLocalId("local-msg"),
           role: "assistant",
-          content: "죄송합니다. 서버와 통신 중 문제가 발생했어요. 잠시 후 다시 시도해 주세요.",
+          content:
+            "죄송합니다. 서버와 통신 중 문제가 발생했어요. 잠시 후 다시 시도해 주세요.",
           createdAt: replyTime,
         };
 
@@ -1526,10 +1596,10 @@ const ChatbotApp: React.FC<ChatbotAppProps> = ({
           prev.map((session) =>
             session.id === sessionIdForSend
               ? {
-                ...session,
-                messages: [...session.messages, errorMessage],
-                updatedAt: replyTime,
-              }
+                  ...session,
+                  messages: [...session.messages, errorMessage],
+                  updatedAt: replyTime,
+                }
               : session
           )
         );
@@ -1543,7 +1613,8 @@ const ChatbotApp: React.FC<ChatbotAppProps> = ({
       const errorMessage: ChatMessage = {
         id: makeLocalId("local-msg"),
         role: "assistant",
-        content: "죄송합니다. 서버와 통신 중 문제가 발생했어요. 잠시 후 다시 시도해 주세요.",
+        content:
+          "죄송합니다. 서버와 통신 중 문제가 발생했어요. 잠시 후 다시 시도해 주세요.",
         createdAt: replyTime,
       };
 
@@ -1551,10 +1622,10 @@ const ChatbotApp: React.FC<ChatbotAppProps> = ({
         prev.map((session) =>
           session.id === sessionIdForSend
             ? {
-              ...session,
-              messages: [...session.messages, errorMessage],
-              updatedAt: replyTime,
-            }
+                ...session,
+                messages: [...session.messages, errorMessage],
+                updatedAt: replyTime,
+              }
             : session
         )
       );
@@ -1572,10 +1643,14 @@ const ChatbotApp: React.FC<ChatbotAppProps> = ({
       : null;
 
     if (mode === "retry" && current?.serverId) {
-      const idx = current.messages.findIndex((m) => m.role === "user" && trimStr(m.content) === base);
+      const idx = current.messages.findIndex(
+        (m) => m.role === "user" && trimStr(m.content) === base
+      );
 
       if (idx >= 0) {
-        const nextAssistant = current.messages.slice(idx + 1).find((m) => m.role === "assistant");
+        const nextAssistant = current.messages
+          .slice(idx + 1)
+          .find((m) => m.role === "assistant");
         const targetMessageId = nextAssistant?.serverId;
 
         if (targetMessageId && isUuidLike(targetMessageId)) {
@@ -1585,7 +1660,9 @@ const ChatbotApp: React.FC<ChatbotAppProps> = ({
 
               // 기본값을 true로: env 미설정이어도 스트리밍 경로를 반드시 탄다.
               const ENABLE_CHAT_STREAMING =
-                String(import.meta.env.VITE_CHAT_STREAMING ?? "true").toLowerCase() === "true";
+                String(
+                  import.meta.env.VITE_CHAT_STREAMING ?? "true"
+                ).toLowerCase() === "true";
 
               if (ENABLE_CHAT_STREAMING) {
                 // 일반 메시지와 동일한 스트리밍 방식으로 처리
@@ -1630,7 +1707,11 @@ const ChatbotApp: React.FC<ChatbotAppProps> = ({
                             m.id === placeholderId ? { ...m, content: acc } : m
                           );
 
-                          return { ...session, messages: nextMessages, updatedAt: Date.now() };
+                          return {
+                            ...session,
+                            messages: nextMessages,
+                            updatedAt: Date.now(),
+                          };
                         })
                       );
                     },
@@ -1642,7 +1723,11 @@ const ChatbotApp: React.FC<ChatbotAppProps> = ({
 
                           const nextMessages = session.messages.map((m) =>
                             m.id === placeholderId
-                              ? { ...m, content: f.content || acc, serverId: f.messageId }
+                              ? {
+                                  ...m,
+                                  content: f.content || acc,
+                                  serverId: f.messageId,
+                                }
                               : m
                           );
 
@@ -1676,7 +1761,10 @@ const ChatbotApp: React.FC<ChatbotAppProps> = ({
                 void final;
               } else {
                 // 기존 non-stream (fallback)
-                const res = await retryMessage(current.serverId as string, targetMessageId);
+                const res = await retryMessage(
+                  current.serverId as string,
+                  targetMessageId
+                );
                 const t = Date.now();
 
                 const assistantMessage: ChatMessage = {
@@ -1689,7 +1777,13 @@ const ChatbotApp: React.FC<ChatbotAppProps> = ({
 
                 setSessions((prev) =>
                   prev.map((s) =>
-                    s.id === current.id ? { ...s, messages: [...s.messages, assistantMessage], updatedAt: t } : s
+                    s.id === current.id
+                      ? {
+                          ...s,
+                          messages: [...s.messages, assistantMessage],
+                          updatedAt: t,
+                        }
+                      : s
                   )
                 );
 
@@ -1707,7 +1801,10 @@ const ChatbotApp: React.FC<ChatbotAppProps> = ({
                 }
               }
             } catch (e) {
-              console.warn("[ChatbotApp] retryMessage failed, fallback to resend:", e);
+              console.warn(
+                "[ChatbotApp] retryMessage failed, fallback to resend:",
+                e
+              );
               await processSendMessage(base);
             } finally {
               setIsSending(false);
@@ -1725,13 +1822,18 @@ const ChatbotApp: React.FC<ChatbotAppProps> = ({
     void processSendMessage(question);
   };
 
-  const handleFeedbackChange = (localMessageId: string, value: FeedbackValue) => {
+  const handleFeedbackChange = (
+    localMessageId: string,
+    value: FeedbackValue
+  ) => {
     if (!activeSessionId) return;
     const now = Date.now();
 
     const s = sessionsRef.current.find((x) => x.id === activeSessionId) ?? null;
     const serverSessionId = s?.serverId;
-    const serverMessageId = s?.messages.find((x) => x.id === localMessageId)?.serverId;
+    const serverMessageId = s?.messages.find(
+      (x) => x.id === localMessageId
+    )?.serverId;
 
     setSessions((prev) =>
       prev.map((session) => {
@@ -1750,11 +1852,15 @@ const ChatbotApp: React.FC<ChatbotAppProps> = ({
     );
 
     if (!serverSessionId) {
-      console.warn("[ChatbotApp] feedback skipped: server sessionId is missing");
+      console.warn(
+        "[ChatbotApp] feedback skipped: server sessionId is missing"
+      );
       return;
     }
     if (!serverMessageId) {
-      console.warn("[ChatbotApp] feedback skipped: server messageId is missing");
+      console.warn(
+        "[ChatbotApp] feedback skipped: server messageId is missing"
+      );
       return;
     }
 
@@ -1784,10 +1890,10 @@ const ChatbotApp: React.FC<ChatbotAppProps> = ({
       prev.map((session) =>
         session.id === sessionId
           ? {
-            ...session,
-            messages: [...session.messages, pendingMessage],
-            updatedAt: now,
-          }
+              ...session,
+              messages: [...session.messages, pendingMessage],
+              updatedAt: now,
+            }
           : session
       )
     );
@@ -1825,7 +1931,11 @@ const ChatbotApp: React.FC<ChatbotAppProps> = ({
       );
 
       if (!res.ok) {
-        console.warn("[ChatbotApp] report submit failed:", res.status, res.message);
+        console.warn(
+          "[ChatbotApp] report submit failed:",
+          res.status,
+          res.message
+        );
       }
     })();
   };
@@ -1878,8 +1988,8 @@ const ChatbotApp: React.FC<ChatbotAppProps> = ({
     animationState === "opening"
       ? "cb-genie-opening"
       : animationState === "closing"
-        ? "cb-genie-closing"
-        : "";
+      ? "cb-genie-closing"
+      : "";
 
   return (
     <div className="cb-genie-wrapper">
@@ -1893,7 +2003,10 @@ const ChatbotApp: React.FC<ChatbotAppProps> = ({
         }}
         onMouseDown={onRequestFocus}
       >
-        <div className="cb-chatbot-panel" style={{ width: size.width, height: size.height }}>
+        <div
+          className="cb-chatbot-panel"
+          style={{ width: size.width, height: size.height }}
+        >
           <div className="cb-drag-bar" onMouseDown={handleDragMouseDown} />
 
           <div
@@ -1954,7 +2067,9 @@ const ChatbotApp: React.FC<ChatbotAppProps> = ({
               enableServerSync={true}
               // 핵심: 폴링 OFF (요청 계속 오는 문제 차단)
               serverSyncIntervalMs={0}
-              getServerSessionIdForLocalSession={getServerSessionIdForLocalSession}
+              getServerSessionIdForLocalSession={
+                getServerSessionIdForLocalSession
+              }
               onSelectServerSession={handleSelectServerSession}
               onHydrateServerSession={handleHydrateServerSession}
             />

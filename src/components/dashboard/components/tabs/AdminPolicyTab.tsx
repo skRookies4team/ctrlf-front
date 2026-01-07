@@ -178,31 +178,11 @@ function renderAttachmentSummary(
   );
 }
 
-type SortMode = "STATUS" | "DOCID_ASC";
 type RightTab = "OVERVIEW" | "DRAFT" | "PREPROCESS" | "REVIEW";
 
 function safeTime(v?: string) {
   const t = v ? new Date(v).getTime() : 0;
   return Number.isFinite(t) ? t : 0;
-}
-
-function groupPriority(g: PolicyDocGroup) {
-  // 낮을수록 상단 노출
-  if (g.draft) return 0;
-  if (g.pending) return 1;
-  if (g.active) return 2;
-  if (g.rejected) return 3;
-  if (g.archived && g.archived.length > 0) return 4;
-  if (g.deleted) return 5;
-  return 6;
-}
-
-function groupLatestUpdatedAt(g: PolicyDocGroup) {
-  let max = 0;
-  for (const v of g.versions) {
-    max = Math.max(max, safeTime(v.updatedAt));
-  }
-  return max;
 }
 
 /**
@@ -619,15 +599,13 @@ export default function AdminPolicyTab() {
   const [toast, setToast] = useState<Toast>({ open: false });
   const toastTimerRef = useRef<number | null>(null);
 
+  // 검색 및 필터 상태
   const [search, setSearch] = useState("");
   const [searchQuery, setSearchQuery] = useState(""); // 실제 검색에 사용되는 쿼리 (debounced)
-  const [statusFilter, setStatusFilter] = useState<PolicyDocStatus | "ALL">(
-    "ALL"
+  const [statusFilter, setStatusFilter] = useState<string | undefined>(
+    undefined
   );
-
-  const [includeArchived, setIncludeArchived] = useState(false);
-  const [includeDeleted, setIncludeDeleted] = useState(false);
-  const [sortMode, setSortMode] = useState<SortMode>("STATUS");
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   // 페이징 상태
   const [currentPage, setCurrentPage] = useState(0);
@@ -660,7 +638,7 @@ export default function AdminPolicyTab() {
     string | null
   >(null);
 
-  // 검색어 debounce: 입력이 멈춘 후 300ms 후에 검색 실행
+  // 검색어 debounce: 입력이 멈춘 후 800ms 후에 검색 실행
   useEffect(() => {
     const timer = setTimeout(() => {
       setSearchQuery(search);
@@ -675,12 +653,9 @@ export default function AdminPolicyTab() {
       setLoading(true);
       setError(null);
 
+      // status 필터 변환: PENDING_REVIEWER -> PENDING
       const statusParam =
-        statusFilter === "ALL"
-          ? undefined
-          : statusFilter === "PENDING_REVIEWER"
-          ? "PENDING"
-          : statusFilter;
+        statusFilter === "PENDING_REVIEWER" ? "PENDING" : statusFilter;
 
       const response = await listPolicies({
         search: searchQuery || undefined,
@@ -832,42 +807,8 @@ export default function AdminPolicyTab() {
     return files;
   }, [selected, pendingFileUrl, pendingFileInfo, pendingFileVersionId]);
 
-  // 서버에서 이미 검색된 결과만 필터링 (클라이언트 사이드 추가 필터링은 없음)
-  const filteredGroups = useMemo(() => {
-    const excluded = new Set<PolicyDocStatus>();
-    if (!includeArchived) excluded.add("ARCHIVED");
-    if (!includeDeleted) excluded.add("DELETED");
-
-    const base = groups
-      .map((g) => {
-        if (statusFilter === "ALL") {
-          const hasAnyVisible = g.versions.some((v) => !excluded.has(v.status));
-          return hasAnyVisible ? g : null;
-        }
-
-        const has = g.versions.some((v) => v.status === statusFilter);
-        return has ? g : null;
-      })
-      .filter(Boolean) as PolicyDocGroup[];
-
-    const sorted = base.slice().sort((a, b) => {
-      if (sortMode === "DOCID_ASC") {
-        return a.documentId.localeCompare(b.documentId);
-      }
-
-      const pa = groupPriority(a);
-      const pb = groupPriority(b);
-      if (pa !== pb) return pa - pb;
-
-      const ta = groupLatestUpdatedAt(a);
-      const tb = groupLatestUpdatedAt(b);
-      if (ta !== tb) return tb - ta;
-
-      return a.documentId.localeCompare(b.documentId);
-    });
-
-    return sorted;
-  }, [groups, statusFilter, includeArchived, includeDeleted, sortMode]);
+  // API 응답 순서 유지
+  const filteredGroups = groups;
 
   const showToast = (tone: "neutral" | "warn" | "danger", message: string) => {
     setToast({ open: true, tone, message });
@@ -1422,13 +1363,39 @@ export default function AdminPolicyTab() {
     }
   };
 
+  // preprocessPreview의 최신 상태도 함께 확인
+  const currentPreprocessStatus =
+    preprocessPreview?.preprocessStatus || selected?.preprocessStatus;
   const canSubmitReview =
-    selected?.status === "DRAFT" && selected.preprocessStatus === "READY";
+    selected?.status === "DRAFT" && currentPreprocessStatus === "READY";
 
   const onSubmitReview = async () => {
-    console.log("f1");
-    if (!selected || selected.status !== "DRAFT") return;
-    console.log("f2");
+    // preprocessPreview의 최신 상태도 함께 확인
+    const currentPreprocessStatus =
+      preprocessPreview?.preprocessStatus || selected?.preprocessStatus;
+    console.log("onSubmitReview called", {
+      selected: selected?.documentId,
+      status: selected?.status,
+      preprocessStatus: selected?.preprocessStatus,
+      preprocessPreviewStatus: preprocessPreview?.preprocessStatus,
+      currentPreprocessStatus,
+      canSubmitReview,
+    });
+    if (
+      !selected ||
+      selected.status !== "DRAFT" ||
+      currentPreprocessStatus !== "READY"
+    ) {
+      console.log("Early return:", {
+        hasSelected: !!selected,
+        status: selected?.status,
+        preprocessStatus: selected?.preprocessStatus,
+        preprocessPreviewStatus: preprocessPreview?.preprocessStatus,
+        currentPreprocessStatus,
+      });
+      return;
+    }
+    console.log("Proceeding with review request...");
 
     try {
       await updateStatus(selected.documentId, selected.version, {
@@ -1451,13 +1418,7 @@ export default function AdminPolicyTab() {
         changeSummary: "",
       });
 
-      // DRAFT에서 PENDING으로 변경했으므로, 필터가 DRAFT인 경우 PENDING_REVIEWER로 변경
-      // statusFilter 변경 시 useEffect가 자동으로 fetchPolicies를 호출하므로 명시적 호출 불필요
-      if (statusFilter === "DRAFT") {
-        setStatusFilter("PENDING_REVIEWER");
-      } else {
-        await fetchPolicies(); // 필터가 변경되지 않는 경우에만 명시적으로 새로고침
-      }
+      await fetchPolicies(); // 목록 새로고침
 
       showToast("neutral", "검토 요청을 전송했습니다.");
     } catch (e) {
@@ -1817,50 +1778,37 @@ export default function AdminPolicyTab() {
               <div className="cb-policy-empty muted" style={{ color: "red" }}>
                 {preprocessPreviewError}
               </div>
-            ) : preprocessPreview?.preview ? (
+            ) : preprocessPreview &&
+              (preprocessPreview.preprocessPages !== null ||
+                preprocessPreview.preprocessChars !== null ||
+                preprocessPreview.preprocessExcerpt) ? (
               <>
-                <div className="row">
-                  <div className="k">전체 청크 수</div>
-                  <div className="v">
-                    {preprocessPreview.preview.totalChunks.toLocaleString()}개
-                  </div>
-                </div>
-                {preprocessPreview.preview.sampleChunks &&
-                preprocessPreview.preview.sampleChunks.length > 0 ? (
-                  <>
+                {preprocessPreview.preprocessPages !== null &&
+                  preprocessPreview.preprocessPages !== undefined && (
                     <div className="row">
-                      <div className="k">샘플 청크</div>
+                      <div className="k">페이지 수</div>
                       <div className="v">
-                        {preprocessPreview.preview.sampleChunks.length}개 표시
+                        {preprocessPreview.preprocessPages.toLocaleString()}p
                       </div>
                     </div>
-                    <div className="cb-policy-chunks-preview">
-                      {preprocessPreview.preview.sampleChunks.map(
-                        (chunk, idx) => (
-                          <div key={idx} className="cb-policy-chunk-item">
-                            <div className="cb-policy-chunk-header">
-                              <span className="cb-policy-chunk-index">
-                                청크 #{chunk.chunkIndex}
-                              </span>
-                            </div>
-                            <pre className="cb-policy-chunk-text">
-                              {chunk.text}
-                            </pre>
-                          </div>
-                        )
-                      )}
+                  )}
+                {preprocessPreview.preprocessChars !== null &&
+                  preprocessPreview.preprocessChars !== undefined && (
+                    <div className="row">
+                      <div className="k">문자 수</div>
+                      <div className="v">
+                        {preprocessPreview.preprocessChars.toLocaleString()}{" "}
+                        chars
+                      </div>
                     </div>
-                  </>
-                ) : (
-                  <div className="cb-policy-empty muted">
-                    샘플 청크가 없습니다.
-                  </div>
-                )}
-                {preprocessPreview.processedAt && (
+                  )}
+                {preprocessPreview.preprocessExcerpt && (
                   <div className="row">
-                    <div className="k">처리 완료 시각</div>
+                    <div className="k">미리보기</div>
                     <div className="v">
-                      {new Date(preprocessPreview.processedAt).toLocaleString()}
+                      <pre className="cb-policy-excerpt">
+                        {preprocessPreview.preprocessExcerpt}
+                      </pre>
                     </div>
                   </div>
                 )}
@@ -2018,8 +1966,6 @@ export default function AdminPolicyTab() {
         );
       }
 
-      console.log(canSubmitReview);
-
       return (
         <section className="cb-policy-card">
           <div className="cb-policy-card-title">검토요청</div>
@@ -2105,7 +2051,7 @@ export default function AdminPolicyTab() {
             <div className="cb-policy-filters">
               <div className="cb-policy-filters-row">
                 <input
-                  key="policy-search-input"
+                  ref={searchInputRef}
                   className="cb-policy-input"
                   placeholder="document_id / 제목 검색"
                   value={search}
@@ -2113,33 +2059,21 @@ export default function AdminPolicyTab() {
                 />
               </div>
 
-              <div className="cb-policy-filters-row cb-policy-filters-row--2">
+              <div className="cb-policy-filters-row">
                 <select
                   className="cb-policy-select"
-                  value={statusFilter}
+                  value={statusFilter || ""}
                   onChange={(e) => {
-                    const v = e.target.value as PolicyDocStatus | "ALL";
-                    setStatusFilter(v);
-                    if (v === "ARCHIVED") setIncludeArchived(true);
-                    if (v === "DELETED") setIncludeDeleted(true);
+                    const v = e.target.value;
+                    setStatusFilter(v === "" ? undefined : v);
                   }}
                 >
-                  <option value="ALL">전체</option>
+                  <option value="">전체</option>
                   <option value="DRAFT">초안</option>
-                  <option value="PENDING_REVIEWER">검토 대기</option>
+                  <option value="PENDING">검토 대기</option>
                   <option value="ACTIVE">현재 적용중</option>
                   <option value="REJECTED">반려됨</option>
                   <option value="ARCHIVED">보관됨</option>
-                  <option value="DELETED">삭제됨</option>
-                </select>
-
-                <select
-                  className="cb-policy-select"
-                  value={sortMode}
-                  onChange={(e) => setSortMode(e.target.value as SortMode)}
-                >
-                  <option value="STATUS">정렬: 상태 우선</option>
-                  <option value="DOCID_ASC">정렬: 문서ID</option>
                 </select>
               </div>
             </div>

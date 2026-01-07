@@ -69,6 +69,13 @@ interface CreatorStudioViewProps {
   userRole?: UserRole;
   creatorName?: string;
   allowedDeptIds?: string[] | null;
+
+  /**
+   * 문서 업로드 시 사용할 domain
+   * - "EDU": 교육 컨텐츠 페이지에서 열었을 때 (기본값)
+   * - "POLICY": 관리자 사규탭 페이지에서 열었을 때
+   */
+  sourceDomain?: "EDU" | "POLICY";
 }
 
 const INITIAL_SIZE: Size = { width: 1080, height: 680 };
@@ -1339,6 +1346,7 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
   userRole,
   creatorName,
   allowedDeptIds,
+  sourceDomain = "EDU",
 }) => {
   const role: UserRole = userRole ?? "VIDEO_CREATOR";
   const canOpen = can(role, "OPEN_CREATOR_STUDIO");
@@ -1349,10 +1357,11 @@ const CreatorStudioView: React.FC<CreatorStudioViewProps> = ({
 
   // 컨트롤러가 undefined를 "필터 적용/허용 없음"으로 해석하는 케이스 방어
   const safeAllowedDeptIds = allowedDeptIds ?? null;
-
+  
   const controller = useCreatorStudioController({
     creatorName: creatorName ?? "VIDEO_CREATOR",
     allowedDeptIds: safeAllowedDeptIds,
+    sourceDomain,
   });
 
   const {
