@@ -598,13 +598,13 @@ const FloatingChatbotRoot: React.FC<FloatingChatbotRootProps> = ({
             anchor={anchor}
             onClose={handleCloseCreatorPanel}
             onRequestFocus={() => dispatch({ type: "FOCUS", id: "creator" })}
-            sourceDomain={
-              typeof window !== "undefined" &&
-              (window.location.pathname.includes("/admin") ||
-                window.location.pathname.includes("/dashboard"))
-                ? "POLICY"
-                : "EDU"
-            }
+            sourceDomain={(() => {
+              if (typeof window === "undefined") return "EDU";
+              const stored = localStorage.getItem(
+                "ctrlf-creator-source-domain"
+              );
+              return stored === "POLICY" || stored === "EDU" ? stored : "EDU";
+            })()}
           />
         </div>
       )}

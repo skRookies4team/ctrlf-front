@@ -34,6 +34,7 @@ import {
 import { fetchJson } from "../common/api/authHttp";
 import keycloak from "../../keycloak";
 import { uploadDocument } from "./ragDocumentsApi";
+import { getVideo } from "./creatorApi";
 
 type ToastKind = "success" | "error" | "info";
 
@@ -4064,6 +4065,39 @@ export function useCreatorStudioController(
     try {
       showToast("info", "자료 업로드/등록을 시작합니다…", 1800);
 
+      // domain 결정: sourceDomain과 category에 따라 결정
+      // sourceDomain이 "POLICY"면 "POLICY", "EDU"면 category에 따라 결정
+      let domain = "EDU"; // 기본값
+
+      if (sourceDomain === "POLICY") {
+        domain = "POLICY";
+      } else if (sourceDomain === "EDU") {
+        // 비디오 상세조회 API를 통해 category 확인
+        try {
+          const videoDetail = await getVideo(videoIdSnapshot);
+          const category = videoDetail.category;
+
+          if (category === "JOB_DUTY") {
+            domain = "직무교육";
+          } else if (category === "DISABILITY_AWARENESS") {
+            domain = "장애인인식개선교육";
+          } else if (category === "WORKPLACE_BULLYING") {
+            domain = "직장내괴롭힘교육";
+          } else if (category === "SEXUAL_HARASSMENT_PREVENTION") {
+            domain = "직장내성희롱교육";
+          } else if (category === "PERSONAL_INFO_PROTECTION") {
+            domain = "정보보안교육";
+          }
+          // category가 없거나 매칭되지 않으면 기본값 "EDU" 사용
+        } catch (error) {
+          console.warn(
+            "[uploadDocument] 비디오 상세조회 실패, 기본값 사용:",
+            error
+          );
+          // 에러 발생 시 기본값 "EDU" 사용
+        }
+      }
+
       for (const { file, meta } of validFiles) {
         const presign = await requestPresignUpload({
           fileName: meta.name,
@@ -4077,10 +4111,6 @@ export function useCreatorStudioController(
           file,
           signal: ac.signal,
         });
-
-        // domain 결정: 모달을 연 페이지 기준
-        // - sourceDomain이 "POLICY"면 "POLICY", 그 외에는 "EDU" 사용
-        const domain = sourceDomain === "POLICY" ? "POLICY" : "EDU";
 
         console.log("[uploadDocument] 호출 전:", {
           title: meta.name,
@@ -4868,6 +4898,38 @@ export function useCreatorStudioController(
     });
 
     try {
+      // domain 결정: sourceDomain과 category에 따라 결정
+      let domain = "EDU"; // 기본값
+
+      if (sourceDomain === "POLICY") {
+        domain = "POLICY";
+      } else if (sourceDomain === "EDU") {
+        // 비디오 상세조회 API를 통해 category 확인
+        try {
+          const videoDetail = await getVideo(selectedItem.id);
+          const category = videoDetail.category;
+
+          if (category === "JOB_DUTY") {
+            domain = "직무교육";
+          } else if (category === "DISABILITY_AWARENESS") {
+            domain = "장애인인식개선교육";
+          } else if (category === "WORKPLACE_BULLYING") {
+            domain = "직장내괴롭힘교육";
+          } else if (category === "SEXUAL_HARASSMENT_PREVENTION") {
+            domain = "직장내성희롱교육";
+          } else if (category === "PERSONAL_INFO_PROTECTION") {
+            domain = "정보보안교육";
+          }
+          // category가 없거나 매칭되지 않으면 기본값 "EDU" 사용
+        } catch (error) {
+          console.warn(
+            "[소스셋 생성] 비디오 상세조회 실패, 기본값 사용:",
+            error
+          );
+          // 에러 발생 시 기본값 "EDU" 사용
+        }
+      }
+
       await safeFetchJson(VIDEO_SOURCESET_CREATE_ENDPOINT, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -4879,12 +4941,8 @@ export function useCreatorStudioController(
 
           // swagger 필수(또는 서버에서 사실상 요구하는 경우가 많음)
           title: (selectedItem.title ?? "").trim() || "교육 자료",
-          // domain 값은 백엔드 enum에 맞춰야 함
-          // - 직무면 JOB_TRAINING, 의무면 FOUR_MANDATORY로 가정(스웨거 예시 기준)
-          // categoryId를 기준으로 판단 (jobTrainingId는 직무 카테고리에서만 사용)
-          domain: isJobCategory(selectedItem.categoryId)
-            ? "JOB_TRAINING"
-            : "FOUR_MANDATORY",
+          // domain 값은 sourceDomain과 category에 따라 결정
+          domain,
 
           // 과거 스펙/백엔드 호환용 alias
           eduId: educationId,
