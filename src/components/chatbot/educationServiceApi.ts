@@ -449,6 +449,39 @@ export async function resolveEducationVideoUrl(
 }
 
 /* =========================
+ * Video meta
+ * ========================= */
+
+export type VideoMetaResponse = {
+  id?: string;
+  fileUrl?: string | null;
+  sourceFileUrl?: string | null;
+  duration?: number | null;
+  status?: string | null;
+  [k: string]: unknown;
+};
+
+/**
+ * VIDEO 메타 단건 조회
+ * - GET /video/{videoId}
+ * - 미리보기(2차)에서 sourceFileUrl을 사용하기 위함
+ */
+export async function getVideoMeta(
+  videoId: string,
+  init?: Pick<RequestInit, "signal">
+): Promise<VideoMetaResponse> {
+  const id = String(videoId ?? "").trim();
+  if (!id) throw new Error("[EDU_API] getVideoMeta: videoId가 비어 있습니다.");
+
+  const url = `${EDU_BASE}/video/${encodeURIComponent(id)}`;
+  return await eduFetch<VideoMetaResponse>(
+    url,
+    { method: "GET", signal: init?.signal },
+    `getVideoMeta:${id}`
+  );
+}
+
+/* =========================
  * Education
  * ========================= */
 
