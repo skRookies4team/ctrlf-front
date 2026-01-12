@@ -42,6 +42,37 @@ const AdminNotifications: React.FC<AdminNotificationsProps> = ({
   // 최대 알림 개수 (초과 시 오래된 것 제거)
   const MAX_NOTIFICATIONS = 200;
 
+  // 메시지 정규화: 실제 개행(\n), 문자열 개행(\\n), CRLF(\r\n) 모두 처리
+  const normalizeMessage = useCallback((value: unknown): string => {
+    const text = value == null ? "" : String(value);
+
+    // 1) CRLF -> LF
+    // 2) "\\n" (문자 2개) -> "\n" (실제 개행)
+    // 3) 빈 문자열 방어
+    const normalized = text
+      .replace(/\r\n/g, "\n")
+      .replace(/\\n/g, "\n")
+      .trim();
+
+    return normalized.length > 0 ? normalized : "(알림 메시지 없음)";
+  }, []);
+
+  // 줄바꿈 렌더링 강제 (CSS 영향 최소화)
+  const renderMultilineMessage = useCallback((message: unknown) => {
+    const text = normalizeMessage(message);
+    const lines = text.split("\n");
+    return (
+      <>
+        {lines.map((line, idx) => (
+          <React.Fragment key={idx}>
+            {line}
+            {idx < lines.length - 1 ? <br /> : null}
+          </React.Fragment>
+        ))}
+      </>
+    );
+  }, [normalizeMessage]);
+
   // ref 업데이트 (클로저 문제 방지)
   useEffect(() => {
     isOpenRef.current = isOpen;
@@ -71,9 +102,7 @@ const AdminNotifications: React.FC<AdminNotificationsProps> = ({
       }
 
       // message가 없거나 빈 문자열이면 기본 메시지 사용
-      const message = notification.message
-        ? String(notification.message).trim()
-        : "(알림 메시지 없음)";
+      const message = normalizeMessage(notification.message);
 
       if (message === "" || message === "(알림 메시지 없음)") {
         console.warn("[알림] 메시지가 비어있습니다:", notification);
@@ -453,7 +482,7 @@ const AdminNotifications: React.FC<AdminNotificationsProps> = ({
                     </div>
                   )}
                   <div className="cb-admin-notif-item-message">
-                    {notification.message || "(메시지 없음)"}
+                    {renderMultilineMessage(notification.message)}
                   </div>
                 </div>
               );
